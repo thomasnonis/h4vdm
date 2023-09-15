@@ -1,0 +1,3 @@
+[submodule "h264-extractor"]
+	path = h264-extractor
+	url = git@gitlab.com:viper-purdue/h4vdm.git
