@@ -1,6 +1,7 @@
 import os
 import subprocess
 import skimage.transform
+import skimage.color
 import numpy as np
 import struct
 from slice_pb2 import Slice
@@ -32,7 +33,7 @@ class H264Extractor():
             str: full path to the h264 file
         """
         
-        video_name = os.path.basename(video_filename).split('.')[0]
+        video_name = "\"" + os.path.basename(video_filename).split('.')[0] + "\""
 
         h264_filename = os.path.join(self.cache_dir, video_name + '.h264')
 
@@ -103,9 +104,20 @@ class VideoHandler():
         self.coded_data_filename = coded_data_filename
     
     def get_rgb_frame(self, frame_number, width, height):
+        """Extracts a frame from the YUV sequence and converts it to RGB.
+        It assumes a YUV420 subsampling.
+
+        Args:
+            frame_number (_type_): Index of the frame to be extracted
+            width (_type_): Width of the original frame, not the desired crop
+            height (_type_): Height of the original frame, not the desired crop
+
+        Returns:
+            _type_: The desired frame in RGB format
+        """
         # In YUV420 format, each pixel of the Y (luma) component is represented by 1 byte, while the U and V (chroma) components are subsampled, so each of them is represented by 0.25 bytes. Hence, the total size is (width * height * 1.5).
-        width = 1280
-        height = 720
+        # width = 1280
+        # height = 720
         frame_size = int(width * height * 1.5)
         
         # Color space conversion constants
@@ -139,7 +151,6 @@ class Gop():
 
         self.video_handler = video_handler
 
-        self.gop = []
         self.length = 0
 
         self.frame_height = 0
@@ -169,19 +180,71 @@ class Gop():
             slice.ParseFromString(bytes)
             yield slice
 
-    def _extract_features(self):
-        if self.length == 0 or self.gop is None:
+    def _get_crop_dimensions(self, frame_width, frame_height, crop_width, crop_height, position = 'center'):
+        if position != 'center':
+            raise NotImplementedError('Only center crop is supported for now')
+        
+        left_crop = (frame_width - crop_width) // 2
+        right_crop = left_crop + crop_width
+        top_crop = (frame_height - crop_height) // 2
+        bottom_crop = top_crop + crop_height
+
+        return (left_crop, right_crop, top_crop, bottom_crop)
+
+    def _crop_frame(self, frame, crop_width, crop_height):
+        # TODO: verify correct shape indeces
+        frame_width = frame.shape[1]
+        frame_height = frame.shape[0]
+
+        # crop to center of frame
+        (left_crop, right_crop, top_crop, bottom_crop) = self._get_crop_dimensions(frame_width, frame_height, crop_width, crop_height)
+
+        if crop_width <= 0 or crop_height <= 0:
+            raise ValueError('Crop dimensions must be positive')
+        
+        if crop_width > frame_width or crop_height > frame_height:
+            raise ValueError('Crop dimensions are bigger than frame dimensions')
+        
+        # TODO: verify correct positions of x, y, channel
+        return frame[top_crop:bottom_crop, left_crop:right_crop, :]
+
+    def _crop_macroblocks(self, macroblocks, frame_width, frame_height, crop_width, crop_height):
+        # I'm assuming this makes sense. Maybe should add margin to include partially cropped macroblocks?
+        # Maybe should even avoid cropping and include everything?
+
+        (left_crop, right_crop, top_crop, bottom_crop) = self._get_crop_dimensions(frame_width, frame_height, crop_width, crop_height)
+        
+        cropped_macroblocks = []
+
+        for mb in macroblocks:
+            if mb.x >= left_crop and mb.x < right_crop and mb.y >= top_crop and mb.y < bottom_crop:
+                cropped_macroblocks.append(mb)
+        
+        return cropped_macroblocks
+
+    def _extract_features(self, slices, crop_width, crop_height):
+        if self.length == 0 or slices is None:
             raise ValueError('GOP not extracted yet')
         
-        for slice, frame_number in self.gop:
+        for slice, frame_number in slices:
+            # append frame type
             self.frame_types.append(slice.type)
+
+            # append intra frame
             if slice.type == SliceType.I:
                 self.intra_frame = self.video_handler.get_rgb_frame(frame_number, slice.width, slice.height)
+                self.intra_frame = self._crop_frame(self.intra_frame, crop_width, crop_height)
                 # include difference between I frame and itself (zeros)
                 self.inter_frames.append(self.intra_frame - self.intra_frame)
+                self.inter_frames[-1] = self._crop_frame(self.inter_frames[-1], crop_width, crop_height)
+
+            # append inter frame
             else:
                 self.inter_frames.append(self.video_handler.get_rgb_frame(frame_number, slice.width, slice.height) - self.intra_frame) # abs()?
-            for mb in slice.mbs:
+                self.inter_frames[-1] = self._crop_frame(self.inter_frames[-1], crop_width, crop_height)
+            
+            # append macroblock types and luma quantization parameters
+            for mb in _crop_macroblocks(slice.mbs, slice.width, slice.height, crop_width, crop_height):
                 self.mb_types.append(mb.type)
                 self.luma_qps.append(mb.luma_qp)
 
@@ -189,6 +252,7 @@ class Gop():
 
     def extract_gop(self, target_length: int, width: int = 0, height: int = 0) -> list:
         # TODO: how to crop?
+        slices = []
         slice_iterator = self._get_slice_iterator()
 
         slice = next(slice_iterator)
@@ -202,9 +266,9 @@ class Gop():
                 except StopIteration:
                     raise ValueError('No Intra slice found')
 
-        self.gop.append((slice, frame_index))
+        slices.append((slice, frame_index))
 
-        while len(self.gop) < target_length:
+        while len(slices) < target_length:
             try:
                 slice = next(slice_iterator)
                 frame_index += 1
@@ -212,15 +276,17 @@ class Gop():
                     # GOP is over
                     break
                 else:
-                    self.gop.append((slice, frame_index))
+                    slices.append((slice, frame_index))
             except StopIteration:
-                if len(self.gop) < target_length:
-                    raise ValueError(f'Unable to reach desired GOP length of {target_length}, actual gop length is {len(self.gop)}')
+                if len(slices) < target_length:
+                    raise ValueError(f'Unable to reach desired GOP length of {target_length}, actual gop length is {len(slices)}')
                 else:
                     break
                 
-        self.length = len(self.gop)
-        self._extract_features()
+        self.length = len(slices)
+        if self.length != target_length:
+            raise ValueError(f'Unable to reach desired GOP length of {target_length}, actual gop length is {len(slices)}')
+        self._extract_features(slices, width, height)
 
         return self
     
