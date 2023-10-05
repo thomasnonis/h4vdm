@@ -244,7 +244,7 @@ class Gop():
                 self.inter_frames[-1] = self._crop_frame(self.inter_frames[-1], crop_width, crop_height)
             
             # append macroblock types and luma quantization parameters
-            for mb in _crop_macroblocks(slice.mbs, slice.width, slice.height, crop_width, crop_height):
+            for mb in self._crop_macroblocks(slice.mbs, slice.width, slice.height, crop_width, crop_height):
                 self.mb_types.append(mb.type)
                 self.luma_qps.append(mb.luma_qp)
 
