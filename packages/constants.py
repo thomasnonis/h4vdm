@@ -1,13 +1,20 @@
 I_DONT_KNOW_WHAT_TO_DO_WITH_THIS = 0
 
-GOP_SIZE = 10 # L in paper
+# Paths
+DATASET_ROOT = '/media/thomas/TN_SSD/h4vdm_datasets/VISION'
+
+# Constants
+MACROBLOCK_SIZE = 16
+
+# Feature extraction
+GOP_SIZE = 8 # L in paper
 
 FRAME_HEIGHT = 224
 FRAME_WIDTH = FRAME_HEIGHT
 
+# Neural network hyperparameters
 INTERMEDIATE_OUTPUTS_DIMENSION = 256 #D_0 in paper
 
-# Hyperparameters
 VIT1_DEPTH = 8
 VIT1_PROJECTION_DIMENSION = 256 #D_ViT1 in paper
 VIT1_NUM_MSA_HEADS = 8

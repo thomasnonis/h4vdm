@@ -7,6 +7,8 @@ import struct
 from slice_pb2 import Slice
 from slice_pb2 import SliceType
 
+from .constants import MACROBLOCK_SIZE
+
 
 class H264Extractor():
     def __init__(self, bin_filename, cache_dir):
@@ -162,7 +164,8 @@ class Gop():
         self.mb_types = []
         self.luma_qps = []
 
-        self.extract_gop(gop_length, width, height)
+        slices = self._extract_slices(gop_length)
+        self._extract_features(slices, width, height)
 
     def _get_ep_file_iterator(self):
         with open(self.video_handler.coded_data_filename, 'rb') as file:
@@ -217,41 +220,13 @@ class Gop():
         cropped_macroblocks = []
 
         for mb in macroblocks:
-            if mb.x >= left_crop and mb.x < right_crop and mb.y >= top_crop and mb.y < bottom_crop:
+            # It's not including macroblocks that don't fully fit in the crop. Might want to include even if a single pixel is inside the crop.
+            if mb.x * MACROBLOCK_SIZE >= left_crop and mb.x * MACROBLOCK_SIZE + MACROBLOCK_SIZE < right_crop and mb.y * MACROBLOCK_SIZE >= top_crop and mb.y * MACROBLOCK_SIZE + MACROBLOCK_SIZE < bottom_crop:
                 cropped_macroblocks.append(mb)
         
         return cropped_macroblocks
 
-    def _extract_features(self, slices, crop_width, crop_height):
-        if self.length == 0 or slices is None:
-            raise ValueError('GOP not extracted yet')
-        
-        for slice, frame_number in slices:
-            # append frame type
-            self.frame_types.append(slice.type)
-
-            # append intra frame
-            if slice.type == SliceType.I:
-                self.intra_frame = self.video_handler.get_rgb_frame(frame_number, slice.width, slice.height)
-                self.intra_frame = self._crop_frame(self.intra_frame, crop_width, crop_height)
-                # include difference between I frame and itself (zeros)
-                self.inter_frames.append(self.intra_frame - self.intra_frame)
-                self.inter_frames[-1] = self._crop_frame(self.inter_frames[-1], crop_width, crop_height)
-
-            # append inter frame
-            else:
-                self.inter_frames.append(self.video_handler.get_rgb_frame(frame_number, slice.width, slice.height) - self.intra_frame) # abs()?
-                self.inter_frames[-1] = self._crop_frame(self.inter_frames[-1], crop_width, crop_height)
-            
-            # append macroblock types and luma quantization parameters
-            for mb in self._crop_macroblocks(slice.mbs, slice.width, slice.height, crop_width, crop_height):
-                self.mb_types.append(mb.type)
-                self.luma_qps.append(mb.luma_qp)
-
-        return self
-
-    def extract_gop(self, target_length: int, width: int = 0, height: int = 0) -> list:
-        # TODO: how to crop?
+    def _extract_slices(self, target_length: int) -> list:
         slices = []
         slice_iterator = self._get_slice_iterator()
 
@@ -286,9 +261,39 @@ class Gop():
         self.length = len(slices)
         if self.length != target_length:
             raise ValueError(f'Unable to reach desired GOP length of {target_length}, actual gop length is {len(slices)}')
-        self._extract_features(slices, width, height)
+        
+        return slices
+
+    def _extract_features(self, slices, crop_width, crop_height):
+        if self.length == 0 or slices is None:
+            raise ValueError('GOP not extracted yet')
+        
+        for slice, frame_number in slices:
+            # append frame type
+            self.frame_types.append(slice.type)
+
+            # append intra frame
+            if slice.type == SliceType.I:
+                self.intra_frame = self.video_handler.get_rgb_frame(frame_number, slice.width, slice.height)
+                self.intra_frame = self._crop_frame(self.intra_frame, crop_width, crop_height)
+                # include difference between I frame and itself (zeros)
+                self.inter_frames.append(self.intra_frame - self.intra_frame)
+                self.inter_frames[-1] = self._crop_frame(self.inter_frames[-1], crop_width, crop_height)
+
+            # append inter frame
+            else:
+                frame = self.video_handler.get_rgb_frame(frame_number, slice.width, slice.height)
+                frame = self._crop_frame(frame, crop_width, crop_height)
+                self.inter_frames.append(frame - self.intra_frame) # abs()?
+            
+            # append macroblock types and luma quantization parameters
+            for mb in self._crop_macroblocks(slice.mbs, slice.width, slice.height, crop_width, crop_height):
+                self.mb_types.append(mb.type)
+                self.luma_qps.append(mb.luma_qp)
 
         return self
+
+    
     
     def get_rgb_frame(self, frame_number):
         if self.length == 0:
