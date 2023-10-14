@@ -209,22 +209,18 @@ class Gop():
             raise ValueError('Crop dimensions are bigger than frame dimensions')
         
         # TODO: verify correct positions of x, y, channel
-        return frame[top_crop:bottom_crop, left_crop:right_crop, :]
+        if len(frame.shape) == 3:
+            return frame[top_crop:bottom_crop, left_crop:right_crop, :]
+        elif len(frame.shape) == 2:
+            return frame[top_crop:bottom_crop, left_crop:right_crop]
+        else:
+            raise ValueError('Frame has an unexpected number of dimensions')
 
-    def _crop_macroblocks(self, macroblocks, frame_width, frame_height, crop_width, crop_height):
-        # I'm assuming this makes sense. Maybe should add margin to include partially cropped macroblocks?
-        # Maybe should even avoid cropping and include everything?
-
-        (left_crop, right_crop, top_crop, bottom_crop) = self._get_crop_dimensions(frame_width, frame_height, crop_width, crop_height)
-        
-        cropped_macroblocks = []
-
+    def _build_macroblock_image(self, macroblocks, frame_width, frame_height):
+        img = np.zeros((frame_height, frame_width))
         for mb in macroblocks:
-            # It's not including macroblocks that don't fully fit in the crop. Might want to include even if a single pixel is inside the crop.
-            if mb.x * MACROBLOCK_SIZE >= left_crop and mb.x * MACROBLOCK_SIZE + MACROBLOCK_SIZE < right_crop and mb.y * MACROBLOCK_SIZE >= top_crop and mb.y * MACROBLOCK_SIZE + MACROBLOCK_SIZE < bottom_crop:
-                cropped_macroblocks.append(mb)
-        
-        return cropped_macroblocks
+            img[mb.y * MACROBLOCK_SIZE:mb.y * MACROBLOCK_SIZE + MACROBLOCK_SIZE, mb.x * MACROBLOCK_SIZE:mb.x * MACROBLOCK_SIZE + MACROBLOCK_SIZE] = mb.type
+        return img
 
     def _extract_slices(self, target_length: int) -> list:
         slices = []
@@ -243,7 +239,8 @@ class Gop():
 
         slices.append((slice, frame_index))
 
-        while len(slices) < target_length:
+        # subtract 1 because the first slice is already added
+        while len(slices) < target_length - 1:
             try:
                 slice = next(slice_iterator)
                 frame_index += 1
@@ -286,9 +283,13 @@ class Gop():
                 frame = self._crop_frame(frame, crop_width, crop_height)
                 self.inter_frames.append(frame - self.intra_frame) # abs()?
             
-            # append macroblock types and luma quantization parameters
-            for mb in self._crop_macroblocks(slice.mbs, slice.width, slice.height, crop_width, crop_height):
-                self.mb_types.append(mb.type)
+            # create macroblock image, where each pixel is the type of the macroblock it belongs to
+            tmp_mb_types = self._build_macroblock_image(slice.mbs, slice.width, slice.height)
+            tmp_mb_types = self._crop_frame(tmp_mb_types, crop_width, crop_height)
+            self.mb_types.append(tmp_mb_types)
+            
+            # create luma quantization parameter image, where each pixel is the luma qp of the macroblock it belongs to
+            for mb in slice.mbs:
                 self.luma_qps.append(mb.luma_qp)
 
         return self
