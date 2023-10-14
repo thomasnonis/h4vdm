@@ -9,41 +9,49 @@ from packages.constants import *
 
 
 class H4vdmNet(nn.Module):
-    def __init__(self, gop, ):
+    def __init__(self):
         super().__init__()
 
-        # self.intra_net = ViT(
-        #     image_size = (gop.frame_width, gop.frame_height),
-        #     patch_size = (VIT1_PATCH_SIZE, VIT1_PATCH_SIZE),
-        #     num_classes = I_DONT_KNOW_WHAT_TO_DO_WITH_THIS,
-        #     dim = 
-            # )
+        self.intra_net = ViT(
+            image_size = (FRAME_WIDTH, FRAME_HEIGHT, 3),
+            patch_size = (VIT1_PATCH_SIZE, VIT1_PATCH_SIZE),
+            num_layers = VIT1_DEPTH,
+            num_heads = VIT1_NUM_HEADS,
+            hidden_dim = VIT1_PROJECTION_DIMENSION,
+            mlp_dim = VIT1_OUTPUT_DIMENSION
+            )
 
-        # self.inter_net = ViT(
-        #     self,
-        #     image_size = (gop.frame_width, gop.frame_height),
-        #     patch_size = (VIT2_PATCH_SIZE, VIT2_PATCH_SIZE),
-        #     num_layers: int,
-        #     num_heads: int,
-        #     hidden_dim: int,
-        #     mlp_dim: int,
-        #     dropout: float = 0.0,
-        #     attention_dropout: float = 0.0,
-        #     num_classes: int = 1000,
-        #     representation_size: Optional[int] = None,
-        #     norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-        #     conv_stem_configs: Optional[List[ConvStemConfig]] = None,
+        self.intra_net = ViT(
+            image_size = (FRAME_WIDTH, FRAME_HEIGHT, 3),
+            patch_size = (VIT1_PATCH_SIZE, VIT1_PATCH_SIZE),
+            num_layers = VIT1_DEPTH,
+            num_heads = VIT1_NUM_HEADS,
+            hidden_dim = VIT1_PROJECTION_DIMENSION,
+            mlp_dim = VIT1_OUTPUT_DIMENSION
+            )
 
-        self.intra_net = 0
-        # self.inter_net = ViT(__vit_constructor_parameters_tbd__)
         self.frame_types_net = Embedding(EMBEDDING_VOCABULARY_SIZE, EMBEDDING_DIMENSION)
-        # self.frame_types_net = Embedding(__embedding_constructor_parameters_tbd__)
-        # self.mb_net = ViT(__vit_constructor_parameters_tbd__)
-        # self.luma_net = ViT(__vit_constructor_parameters_tbd__)
+        
+        self.mb_net = ViT(
+            image_size = (FRAME_WIDTH, FRAME_HEIGHT),
+            patch_size = (VIT2_PATCH_SIZE, VIT2_PATCH_SIZE),
+            num_layers = VIT2_DEPTH,
+            num_heads = VIT2_NUM_HEADS,
+            hidden_dim = VIT2_PROJECTION_DIMENSION,
+            mlp_dim = VIT2_OUTPUT_DIMENSION
+            )
+        
+        self.luma_net = ViT(
+            image_size = (FRAME_WIDTH, FRAME_HEIGHT),
+            patch_size = (VIT2_PATCH_SIZE, VIT2_PATCH_SIZE),
+            num_layers = VIT2_DEPTH,
+            num_heads = VIT2_NUM_HEADS,
+            hidden_dim = VIT2_PROJECTION_DIMENSION,
+            mlp_dim = VIT2_OUTPUT_DIMENSION
+            )
 
         self.special_vectors = Parameter(torch.randn(INTERMEDIATE_OUTPUTS_DIMENSION, 4))
 
-        # jan_input_size = 4 * L + 5
         self.joint_net = Transformer(JAN_INPUT_SIZE, JAN_N_HEADS, JAN_N_LAYERS, JAN_N_LAYERS)
 
     def forward(self, gop):
