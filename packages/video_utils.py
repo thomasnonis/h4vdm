@@ -221,6 +221,13 @@ class Gop():
         for mb in macroblocks:
             img[mb.y * MACROBLOCK_SIZE:mb.y * MACROBLOCK_SIZE + MACROBLOCK_SIZE, mb.x * MACROBLOCK_SIZE:mb.x * MACROBLOCK_SIZE + MACROBLOCK_SIZE] = mb.type
         return img
+    
+    def _build_qp_image(self, macroblocks, frame_width, frame_height):
+        # NOTE: looping again over the macroblocks is not efficient, could do both macroblock and qp extraction in the same loop
+        img = np.zeros((frame_height, frame_width))
+        for mb in macroblocks:
+            img[mb.y * MACROBLOCK_SIZE:mb.y * MACROBLOCK_SIZE + MACROBLOCK_SIZE, mb.x * MACROBLOCK_SIZE:mb.x * MACROBLOCK_SIZE + MACROBLOCK_SIZE] = mb.luma_qp
+        return img
 
     def _extract_slices(self, target_length: int) -> list:
         slices = []
@@ -289,8 +296,10 @@ class Gop():
             self.mb_types.append(tmp_mb_types)
             
             # create luma quantization parameter image, where each pixel is the luma qp of the macroblock it belongs to
-            for mb in slice.mbs:
-                self.luma_qps.append(mb.luma_qp)
+            # TODO: needs testing
+            tmp_qp = self._build_qp_image(slice.mbs, slice.width, slice.height)
+            tmp_qp = self._crop_frame(tmp_qp, crop_width, crop_height)
+            self.luma_qps.append(tmp_qp)
 
         return self
 
