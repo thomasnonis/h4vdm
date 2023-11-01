@@ -13,63 +13,118 @@ class H4vdmNet(nn.Module):
         super().__init__()
 
         self.intra_net = ViT(
-            image_size = (FRAME_WIDTH, FRAME_HEIGHT, 3),
-            patch_size = (VIT1_PATCH_SIZE, VIT1_PATCH_SIZE),
+            image_size = max(FRAME_WIDTH, FRAME_HEIGHT),
+            patch_size = VIT1_PATCH_SIZE,
             num_layers = VIT1_DEPTH,
             num_heads = VIT1_NUM_HEADS,
             hidden_dim = VIT1_PROJECTION_DIMENSION,
-            mlp_dim = VIT1_OUTPUT_DIMENSION
+            mlp_dim = VIT1_MLP_DIMENSION,
+            num_classes=VIT1_OUTPUT_DIMENSION
             )
 
-        self.intra_net = ViT(
-            image_size = (FRAME_WIDTH, FRAME_HEIGHT, 3),
-            patch_size = (VIT1_PATCH_SIZE, VIT1_PATCH_SIZE),
+        self.inter_net = ViT(
+            image_size = max(FRAME_WIDTH, FRAME_HEIGHT),
+            patch_size = VIT1_PATCH_SIZE,
             num_layers = VIT1_DEPTH,
             num_heads = VIT1_NUM_HEADS,
             hidden_dim = VIT1_PROJECTION_DIMENSION,
-            mlp_dim = VIT1_OUTPUT_DIMENSION
+            mlp_dim = VIT2_MLP_DIMENSION,
+            num_classes=VIT1_OUTPUT_DIMENSION
             )
 
         self.frame_types_net = Embedding(EMBEDDING_VOCABULARY_SIZE, EMBEDDING_DIMENSION)
         
         self.mb_net = ViT(
-            image_size = (FRAME_WIDTH, FRAME_HEIGHT),
-            patch_size = (VIT2_PATCH_SIZE, VIT2_PATCH_SIZE),
+            image_size = max(FRAME_WIDTH, FRAME_HEIGHT),
+            patch_size = VIT2_PATCH_SIZE,
             num_layers = VIT2_DEPTH,
             num_heads = VIT2_NUM_HEADS,
             hidden_dim = VIT2_PROJECTION_DIMENSION,
-            mlp_dim = VIT2_OUTPUT_DIMENSION
+            mlp_dim = VIT2_MLP_DIMENSION,
+            num_classes=VIT1_OUTPUT_DIMENSION
             )
         
         self.luma_net = ViT(
-            image_size = (FRAME_WIDTH, FRAME_HEIGHT),
-            patch_size = (VIT2_PATCH_SIZE, VIT2_PATCH_SIZE),
+            image_size = max(FRAME_WIDTH, FRAME_HEIGHT),
+            patch_size = VIT2_PATCH_SIZE,
             num_layers = VIT2_DEPTH,
             num_heads = VIT2_NUM_HEADS,
             hidden_dim = VIT2_PROJECTION_DIMENSION,
-            mlp_dim = VIT2_OUTPUT_DIMENSION
+            mlp_dim = VIT2_OUTPUT_DIMENSION,
+            num_classes=VIT1_OUTPUT_DIMENSION
             )
 
-        self.special_vectors = Parameter(torch.randn(INTERMEDIATE_OUTPUTS_DIMENSION, 4))
+        self.special_vectors = Parameter(torch.randn(4, 1, INTERMEDIATE_OUTPUTS_DIMENSION))
 
-        self.joint_net = Transformer(JAN_INPUT_SIZE, JAN_N_HEADS, JAN_N_LAYERS, JAN_N_LAYERS)
+        self.joint_net = Transformer(INTERMEDIATE_OUTPUTS_DIMENSION, JAN_N_HEADS, JAN_N_LAYERS, JAN_N_LAYERS)
 
-    def forward(self, gop):
-        intra = self.intra_net(gop.intra_frame)
-        inter = self.inter_net(gop.inter_frames)
-        frame_types = self.frame_types_net(gop.frame_types)
-        mb = self.mb_net(gop.mb_types)
-        luma = self.luma_net(gop.luma_qps)
+        self.linear = nn.Linear(INTERMEDIATE_OUTPUTS_DIMENSION, OUTPUT_DIMENSION)
 
-        # append intermediate vectors
-        # TODO: might need to transpose special_vectors
-        intra = torch.cat(intra, self.special_vectors[:,0], dim = 1)
-        inter = torch.cat(inter, self.special_vectors[:,1], dim = 1)
-        frame_types = torch.cat(self.frame_types_net, self.special_vectors[:,2], dim = 1)
-        mb = torch.cat(self.mb_net, self.special_vectors[:,3], dim = 1)
+    def forward(self, gop, debug = False):
+        # Inter
+        tmp = gop.get_intra_frame_as_tensor()
+        if debug:
+            print("Input intra frame shape:", tmp.shape)
+        intra = self.intra_net(tmp)
+        if debug:
+            print("Output intra feature shape:", intra.shape)
+        
+        # Intra
+        tmp = gop.get_inter_frames_as_tensor()
+        if debug:
+            print("Input inter frames shape:", tmp.shape)
+        inter = self.inter_net(tmp)
+        if debug:
+            print("Output inter feature shape:", inter.shape)
+        
+        # Frame types
+        tmp = gop.get_frame_types_as_tensor()
+        if debug:
+            print("Input frame types shape:", tmp.shape)
+        frame_types = self.frame_types_net(tmp)
+        if debug:
+            print("Output frame types feature shape:", frame_types.shape)
+        
+        # MB types
+        tmp = gop.get_macroblock_types_as_tensor()
+        if debug:
+            print("Input MB types shape:", tmp.shape)
+        mb = self.mb_net(tmp)
+        if debug:
+            print("Output MB types feature shape:", mb.shape)
 
-        # concatenate all inputs to form jan_input
-        jan_input = torch.cat(intra, inter, frame_types, mb, luma, dim = 1)
+        # Luma QPs
+        tmp = gop.get_luma_qps_as_tensor()
+        if debug:
+            print("Input luma QPs shape:", tmp.shape)
+        luma = self.luma_net(tmp)
+        if debug:
+            print("Output luma QPs feature shape:", luma.shape)
 
-        return self.joint_net(jan_input)
-        pass
+        # Concatenate all inputs and intermediate vectors to form jan_input
+        if debug:
+            print("Special vectors shape:", self.special_vectors.shape)
+
+        jan_input = torch.cat(
+            (intra,
+             self.special_vectors[0],
+             inter,
+             self.special_vectors[1],
+             frame_types,
+             self.special_vectors[2],
+             mb,
+             self.special_vectors[3],
+             luma),
+                dim = 0)
+        if debug:
+            print("Input Joint Analysis Network shape:", jan_input.shape)
+
+        result = self.joint_net(jan_input, jan_input) #TODO: need to pass target to transformer forward pass
+        if debug:
+            print("Output Joint Analysis Network shape:", result.shape)
+
+        # Linear projection
+        result = self.linear(result)
+        if debug:
+            print("Output linear projection shape:", result.shape)
+        return result

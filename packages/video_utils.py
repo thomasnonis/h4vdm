@@ -4,6 +4,7 @@ import skimage.transform
 import skimage.color
 import numpy as np
 import struct
+import torch
 from slice_pb2 import Slice
 from slice_pb2 import SliceType
 
@@ -246,8 +247,7 @@ class Gop():
 
         slices.append((slice, frame_index))
 
-        # subtract 1 because the first slice is already added
-        while len(slices) < target_length - 1:
+        while len(slices) < target_length:
             try:
                 slice = next(slice_iterator)
                 frame_index += 1
@@ -302,8 +302,60 @@ class Gop():
             self.luma_qps.append(tmp_qp)
 
         return self
-
     
+    def get_intra_frame_as_tensor(self):
+        if self.intra_frame is None:
+            raise ValueError('GOP not extracted yet')
+        
+        intra_frame_tensor = torch.tensor((), dtype=torch.float)
+        intra_frame_tensor = intra_frame_tensor.new_zeros((1, self.intra_frame.shape[2], self.intra_frame.shape[0], self.intra_frame.shape[1]))
+        intra_frame_tensor[0] = torch.from_numpy(self.intra_frame).permute(2, 0, 1) # (h,w,c) -> (c,h,w)
+        return intra_frame_tensor
+    
+    def get_inter_frames_as_tensor(self):
+        if self.inter_frames is None:
+            raise ValueError('GOP not extracted yet')
+        
+        inter_frames_tensor = torch.tensor((), dtype=torch.float)
+        inter_frames_tensor = inter_frames_tensor.new_zeros((len(self.inter_frames), self.inter_frames[0].shape[2], self.inter_frames[0].shape[0], self.intra_frame.shape[1]))
+        for i, frame in enumerate(self.inter_frames):
+            inter_frames_tensor[i] = torch.from_numpy(frame).permute(2, 0, 1) # (h,w,c) -> (c,h,w)
+        return inter_frames_tensor
+    
+    def get_frame_types_as_tensor(self):
+        if self.frame_types is None:
+            raise ValueError('GOP not extracted yet')
+        
+        frame_types_tensor = torch.tensor(self.frame_types)
+        return frame_types_tensor
+
+    def get_macroblock_types_as_tensor(self):
+        if self.mb_types is None:
+            raise ValueError('GOP not extracted yet')
+        
+        mb_types_tensor = torch.tensor((), dtype=torch.float)
+        mb_types_tensor = mb_types_tensor.new_zeros((len(self.mb_types), 3, self.mb_types[0].shape[0], self.mb_types[0].shape[1]))
+        for i, mb_frame in enumerate(self.mb_types):
+            converted = torch.from_numpy(mb_frame)
+            # image is grayscale, but we need 3 channels for the network. Copy the grayscale image to all 3 channels
+            mb_types_tensor[i][0] = converted
+            mb_types_tensor[i][1] = converted
+            mb_types_tensor[i][2] = converted
+        return mb_types_tensor
+    
+    def get_luma_qps_as_tensor(self):
+        if self.luma_qps is None:
+            raise ValueError('GOP not extracted yet')
+        
+        luma_qps_tensor = torch.tensor((), dtype=torch.float)
+        luma_qps_tensor = luma_qps_tensor.new_zeros((len(self.luma_qps), 3, self.luma_qps[0].shape[0], self.luma_qps[0].shape[1]))
+        for i, luma_qps_frame in enumerate(self.luma_qps):
+            converted = torch.from_numpy(luma_qps_frame)
+            # image is grayscale, but we need 3 channels for the network. Copy the grayscale image to all 3 channels
+            luma_qps_tensor[i][0] = converted
+            luma_qps_tensor[i][1] = converted
+            luma_qps_tensor[i][2] = converted
+        return luma_qps_tensor
     
     def get_rgb_frame(self, frame_number):
         if self.length == 0:
