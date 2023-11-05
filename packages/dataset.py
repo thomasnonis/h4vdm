@@ -1,6 +1,8 @@
 import os
 import random
+import pickle
 from torch.utils.data import Dataset
+from packages.video_utils import H264Extractor, VideoHandler, Gop
 
 def download(url, folder_path):
     filename = url.split('/')[-1]
@@ -19,7 +21,7 @@ class VisionDataset(Dataset):
     """VISION dataset (https://lesc.dinfo.unifi.it/VISION/)
     """
 
-    def __init__(self, root, download_on_init = False, shuffle = False, devices = [], media_types = [], properties = [], extensions = []):
+    def __init__(self, root: str, download_on_init = False, shuffle = False, devices: list = [], media_types: list = [], properties: list = [], extensions: list = []):
         if not os.path.exists(root):
             try:
                 os.mkdir(root)
@@ -106,6 +108,7 @@ class VisionDataset(Dataset):
                 element['filename'] = filename
                 element['name'] = filename.split('.')[0]
                 element['extension'] = filename.split('.')[1]
+                element['local_path'] = os.path.join(device, media_type, property)
                 element['path'] = os.path.join(self.root, device, media_type, property)
 
                 if download_on_init:
@@ -133,9 +136,80 @@ class VisionDataset(Dataset):
             random.shuffle(index_to_dict_map)
         return index_to_dict_map
 
-if __name__ == '__main__':
-    from pprint import pprint
-        
-    dataset = VisionDataset(root='./datasets/tmp', download_on_init=False, media_types = ['images'], devices=['D01_Samsung_GalaxyS3Mini'])
+class VisionGOPDataset(Dataset):
+    def __init__(self, root: str, h264_extractor: H264Extractor, vision_dataset: VisionDataset, gop_size: int = 8, frame_width: int = 224, frame_height: int = 224, gops_per_video: int = 1, build_on_init: bool = False, force_rebuild: bool = False):
+        self.root = root
+        self.h264_extractor = h264_extractor
+        self.vision_dataset = vision_dataset
+        self.gop_size = gop_size
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.force_rebuild = force_rebuild
 
-    pprint(dataset[-1])
+        if gop_size < 1:
+            raise ValueError('gop_size must be greater than 0')
+        
+        if frame_width < 1 or frame_height < 1:
+            raise ValueError('frame_width and frame_height must be greater than 0')
+        
+        if gops_per_video < 1:
+            raise ValueError('gops_per_video must be greater than 0')
+
+        if gops_per_video > 1:
+            raise NotImplementedError('gops_per_video > 1 is not implemented yet')
+
+        if build_on_init:
+            for i in range(len(self.vision_dataset)):
+                vision_dataset[i]['gop_full_filenames'] = [self._build_gop(self.vision_dataset[i], force_rebuild)]
+
+    def __len__(self):
+        return len(self.vision_dataset)
+    
+    def __getitem__(self, index):
+        if index > len(self):
+            raise RuntimeError(f'index {index} is greater than dataset length {self.length}')
+        
+        video_dict = self.vision_dataset[index]
+        video_dict['gop_full_filenames'] = [self._build_gop(video_dict, self.force_rebuild)]
+
+        return video_dict
+
+    def _build_gop(self, video_dict: dict, force_rebuild: bool):
+        gop_save_path = os.path.join(self.root, video_dict['device'], video_dict['media_type'], video_dict['property'])
+        gop_filename = video_dict['name'] + f'_{self.gop_size}_{self.frame_width}x{self.frame_height}.gop'
+        gop_full_filename = os.path.join(gop_save_path, gop_filename)
+
+        if os.path.exists(gop_full_filename) and force_rebuild == False:
+            return gop_full_filename
+
+        # check if original video exists
+        mp4_filename = os.path.join(video_dict['path'], video_dict['filename'])
+        if not os.path.exists(mp4_filename):
+            raise RuntimeError(f'File {mp4_filename} does not exist')
+        
+        # convert original video to h264
+        h264_filename = self.h264_extractor.convert_to_h264(mp4_filename)
+        yuv_filename, coded_data_filename = self.h264_extractor.extract_yuv_and_codes(h264_filename)
+
+        # build gop
+        video_handler = VideoHandler(mp4_filename, h264_filename, yuv_filename, coded_data_filename)
+
+        gop = Gop(video_handler, self.gop_size, self.frame_width, self.frame_height)
+
+        # remove temporary files
+        os.remove(h264_filename)
+        os.remove(yuv_filename)
+        os.remove(coded_data_filename)
+
+        if os.path.exists(h264_filename) or os.path.exists(yuv_filename) or os.path.exists(coded_data_filename):
+            raise Exception(f'Error removing files {h264_filename}, {yuv_filename}, {coded_data_filename}')
+
+        # save gop
+        if not os.path.exists(gop_save_path):
+            os.makedirs(gop_save_path)
+
+        pickle.dump(gop, open(gop_full_filename, 'wb'))
+        if not os.path.exists(gop_full_filename):
+            raise FileNotFoundError(f'Error while saving gop {gop_full_filename}')
+        
+        return gop_full_filename
