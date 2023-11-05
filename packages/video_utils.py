@@ -8,7 +8,7 @@ import torch
 from slice_pb2 import Slice
 from slice_pb2 import SliceType
 
-from .constants import MACROBLOCK_SIZE
+from packages.constants import MACROBLOCK_SIZE
 
 
 class H264Extractor():
