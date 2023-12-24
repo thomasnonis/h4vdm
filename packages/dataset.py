@@ -24,7 +24,7 @@ class VisionDataset(Dataset):
     def __init__(self, root: str, download_on_init = False, shuffle = False, devices: list = [], media_types: list = [], properties: list = [], extensions: list = []):
         if not os.path.exists(root):
             try:
-                os.mkdir(root)
+                os.makedirs(root)
             except FileNotFoundError:
                 raise FileNotFoundError(f'VISION dataset folder {root} does not exist and cannot be created')
         
