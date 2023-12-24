@@ -145,6 +145,7 @@ class VisionGOPDataset(Dataset):
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.force_rebuild = force_rebuild
+        self.build_on_init = build_on_init
 
         if gop_size < 1:
             raise ValueError('gop_size must be greater than 0')
@@ -160,19 +161,28 @@ class VisionGOPDataset(Dataset):
 
         if build_on_init:
             for i in range(len(self.vision_dataset)):
+                print(f'Building gop for video {i+1}/{len(self.vision_dataset)}')
                 vision_dataset[i]['gop_full_filenames'] = [self._build_gop(self.vision_dataset[i], force_rebuild)]
 
     def __len__(self):
         return len(self.vision_dataset)
     
     def __getitem__(self, index):
-        if index > len(self):
+        if index >= len(self):
             raise RuntimeError(f'index {index} is greater than dataset length {self.length}')
         
         video_dict = self.vision_dataset[index]
-        video_dict['gop_full_filenames'] = [self._build_gop(video_dict, self.force_rebuild)]
 
-        return video_dict
+        # if built on init with force rebuild, no need to forcibly rebuild it here
+        if self.build_on_init == True and self.force_rebuild == True:
+            rebuild = False
+        else:
+            rebuild = self.force_rebuild
+    
+        video_dict['gop_full_filenames'] = [self._build_gop(video_dict, rebuild)]
+
+        gop = pickle.load(open(video_dict['gop_full_filenames'][0], 'rb'))
+        return gop
 
     def _build_gop(self, video_dict: dict, force_rebuild: bool):
         gop_save_path = os.path.join(self.root, video_dict['device'], video_dict['media_type'], video_dict['property'])
@@ -188,13 +198,18 @@ class VisionGOPDataset(Dataset):
             raise RuntimeError(f'File {mp4_filename} does not exist')
         
         # convert original video to h264
+        print(f'Converting {mp4_filename} to h264')
         h264_filename = self.h264_extractor.convert_to_h264(mp4_filename)
+        print(f'Converting {mp4_filename} to h264 done')
+        print(f'Extracting yuv and coded data from {h264_filename}')
         yuv_filename, coded_data_filename = self.h264_extractor.extract_yuv_and_codes(h264_filename)
+        print(f'Extracting yuv and coded data from {h264_filename} done')
 
         # build gop
         video_handler = VideoHandler(mp4_filename, h264_filename, yuv_filename, coded_data_filename)
 
-        gop = Gop(video_handler, self.gop_size, self.frame_width, self.frame_height)
+        
+        gop = Gop(video_handler, video_dict, self.gop_size, self.frame_width, self.frame_height)
 
         # remove temporary files
         os.remove(h264_filename)

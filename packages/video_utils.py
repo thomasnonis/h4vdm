@@ -150,9 +150,10 @@ class VideoHandler():
         return rgb_frame
     
 class Gop():
-    def __init__(self, video_handler: VideoHandler, gop_length: int, width: int = 0, height: int = 0):
+    def __init__(self, video_handler: VideoHandler, video_properties: dict, gop_length: int, width: int = 0, height: int = 0):
 
         self.video_handler = video_handler
+        self.video_properties = video_properties
 
         self.length = 0
 
@@ -167,6 +168,10 @@ class Gop():
 
         slices = self._extract_slices(gop_length)
         self._extract_features(slices, width, height)
+
+    def __eq__(self, other):
+        #TODO: must check also GOP index if multiple GOPs are extracted from the same video
+        return self.video_properties['filename'] == other.video_properties['filename']
 
     def _get_ep_file_iterator(self):
         with open(self.video_handler.coded_data_filename, 'rb') as file:
@@ -367,3 +372,6 @@ class Gop():
             return self.inter_frames[frame_number - 1]
         else:
             raise ValueError(f'Frame number {frame_number} is out of range.')
+        
+    def is_same_device(self, other_gop) -> bool:
+        return self.video_properties['device'] == other_gop.video_properties['device']
