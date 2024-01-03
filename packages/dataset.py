@@ -32,9 +32,10 @@ class VisionDataset(Dataset):
     """VISION dataset (https://lesc.dinfo.unifi.it/VISION/)
     """
 
+    JSON_NAME = 'dataset.json'
     log = create_custom_logger('VisionDataset')
 
-    def __init__(self, root_path: str, download_on_init = False, shuffle = False, devices: list = [], media_types: list = [], properties: list = [], extensions: list = []):
+    def __init__(self, root_path: str, download_on_init = False, shuffle = False, ignore_local_dataset: bool = False, devices: list = [], media_types: list = [], properties: list = [], extensions: list = []):
         
         VisionDataset.log.debug(f'Building VISION dataset in {root_path}')
         self.root_path = root_path
@@ -48,7 +49,12 @@ class VisionDataset(Dataset):
         
         self.length = 0
         self.dataset = {}
-        self._build_dataset(devices, media_types, properties, extensions, download_on_init)
+        is_loaded = False
+        if not ignore_local_dataset:
+            is_loaded = self.load()
+
+        if not is_loaded:
+            self._build_dataset(devices, media_types, properties, extensions, download_on_init)
 
         # build a map that from a number finds the correct keys to the dict
         self.index_to_dict_map = self._build_index_to_dict_map(shuffle)
@@ -149,9 +155,28 @@ class VisionDataset(Dataset):
             random.shuffle(index_to_dict_map)
         return index_to_dict_map
     
-    def save(self, filename):
+    def save(self):
+        filename = os.path.join(self.root, VisionDataset.JSON_NAME)
+        VisionDataset.log.info(f'Saving VISION dataset to {filename}')
         with open(filename, 'w') as f:
             json.dump(self.dataset, f, indent=4)
+
+    def load(self):
+        filename = os.path.join(self.root, VisionDataset.JSON_NAME)
+        if os.path.exists(filename):
+            VisionDataset.log.info(f'Loading VISION dataset from {filename}')
+        else:
+            VisionDataset.log.warn(f'VISION dataset file {filename} does not exist, could not laod')
+            return False
+
+        with open(filename, 'r') as f:
+            self.dataset = json.load(f)
+            self.length = 0
+            for device in self.dataset.keys():
+                self.length += len(self.dataset[device])
+
+        return True
+        
 
 class VisionGOPDataset(VisionDataset):
 
@@ -170,11 +195,19 @@ class VisionGOPDataset(VisionDataset):
             gops_per_video: int = 1,
             build_on_init: bool = False,
             force_rebuild: bool = False,
-            download_on_init = False,
-            shuffle = False):
+            download_on_init: bool = False,
+            ignore_local_dataset: bool = False,
+            shuffle: bool = False):
         
         VisionGOPDataset.log.debug(f'Building VISION GOP dataset in {root_path}')
-        super().__init__(root_path, download_on_init, shuffle, devices, media_types, properties, extensions)
+        super().__init__(root_path=root_path,
+                         download_on_init=download_on_init,
+                         ignore_local_dataset=ignore_local_dataset,
+                         shuffle=shuffle,
+                         devices=devices,
+                         media_types=media_types,
+                         properties=properties,
+                         extensions=extensions)
         
         self.gop_root = os.path.join(root_path, 'VISION_GOP')
         self.gop_size = gop_size
