@@ -58,7 +58,7 @@ def crop_frame(frame, crop_width, crop_height):
 # ==========================================================
 
 class H264Extractor():
-    log = create_custom_logger('H264Extractor', logging.DEBUG)
+    log = create_custom_logger('H264Extractor', logging.WARNING)
 
     def __init__(self, bin_filename, cache_dir):
         if not os.path.exists(bin_filename):
@@ -145,8 +145,8 @@ class H264Extractor():
         H264Extractor.log.debug(f'Cleaning cache directory {self.cache_dir}')
         if os.path.exists(self.cache_dir):
             for files in os.listdir(self.cache_dir):
-                os.remove(self.cache_dir, files)
-            os.rmdir(self.cache_dir)
+                os.remove(os.path.join(self.cache_dir, files))
+            # os.rmdir(self.cache_dir)
 
 # ==========================================================
 # ==========================================================
@@ -155,7 +155,7 @@ class H264Extractor():
 
 class Video():
     h264_extractor = None
-    log = create_custom_logger('Video', logging.DEBUG)
+    log = create_custom_logger('Video', logging.INFO)
 
     def __init__(self, filename: str, device: str, crop_width: int, crop_height: int, target_n_gops: int, target_gop_length: int, extract_gops_on_init: bool = False):
         if Video.h264_extractor == None:
@@ -180,6 +180,7 @@ class Video():
         self.target_n_gops = target_n_gops
         self.target_gop_length = target_gop_length
         self.gops = []
+        self.gops_paths = []
 
         if extract_gops_on_init:
             self._extract_gops()
@@ -202,7 +203,10 @@ class Video():
 
         gops_paths = []
         for gop in video.gops:
+            Gop.log.debug(f'Saving GOP {gop.get_filename()} to {path}/gops')
             gops_paths.append(Gop.save(gop, os.path.join(path, 'gops')))
+
+        video.gops_paths = gops_paths
 
         video_data = (
             video.filename,
@@ -211,7 +215,7 @@ class Video():
             video.crop_height,
             video.target_n_gops,
             video.target_gop_length,
-            gops_paths,
+            video.gops_paths,
         )
 
         pickle.dump(video_data, open(filename, 'wb'))
@@ -227,9 +231,18 @@ class Video():
         Video.log.info(f'Loading video from {filename}')
 
         video_data = pickle.load(open(filename, 'rb'))
-        video = Video(video_data[0], video_data[1], video_data[2], video_data[3], video_data[4], video_data[5], extract_gops_on_init=False)
+        video_filename = video_data[0]
+        video_device = video_data[1]
+        video_crop_width = video_data[2]
+        video_crop_height = video_data[3]
+        video_target_n_gops = video_data[4]
+        video_target_gop_length = video_data[5]
+        video_gop_paths = video_data[6]
 
-        for gop_path in video_data[6]:
+        video = Video(video_filename, video_device, video_crop_width, video_crop_height, video_target_n_gops, video_target_gop_length, extract_gops_on_init=False)
+        video.gops_paths = video_gop_paths
+
+        for gop_path in video_gop_paths:
             video.gops.append(Gop.load(gop_path, video))
 
         return video
@@ -239,15 +252,16 @@ class Video():
             self.h264_filename = Video.h264_extractor.convert_to_h264(self.filename)
 
         (self.yuv_filename, self.coded_data_filename) = Video.h264_extractor.extract_yuv_and_codes(self.h264_filename)
-        # try:
-        #     os.remove(self.h264_filename)
-        #     Video.log.info(f'Removed {self.h264_filename}')
-        # except Exception as e:
-        #     Video.log.critical(f'Unable to remove {self.h264_filename}. Continuing, but beware of your disk space!')    
 
     def _extract_gops(self):
         if len(self.gops) == self.target_n_gops:
             Video.log.debug(f'Video {self.name} already has {self.target_n_gops} GOPs, skipping extraction')
+            return self.gops
+        
+        if len(self.gops_paths) == self.target_n_gops:
+            Video.log.debug(f'Video {self.name} already has {self.target_n_gops} GOPs, loading saved GOPs')
+            for gop_path in self.gops_paths:
+                self.gops.append(Gop.load(gop_path, self))
             return self.gops
         
         self._decode()
@@ -258,13 +272,13 @@ class Video():
 
         while len(self.gops) < self.target_n_gops:
             try:
-                Video.log.debug(f'Extracting GOP {len(self.gops) + 1}/{self.target_n_gops} from video {self.name}')
-                gop = Gop(self, current_frame_number, slice_iterator, extract_features_on_init=False)
+                Video.log.debug(f'Extracting GOP {len(self.gops) + 1}/{self.target_n_gops} from video {self.name}, starting from frame {current_frame_number}')
+                gop = Gop(video_ref=self, current_frame_number=current_frame_number, slice_iterator=slice_iterator, extract_features_on_init=False)
                 # update iterator with progress of last GOP
                 slice_iterator = gop.get_slice_iterator()
                 current_frame_number = gop.get_current_frame_number()
                 self.gops.append(gop)
-            except StopIteration:
+            except Exception:
                 raise ValueError(f'Unable to reach desired number of GOPs for video {self.name}. Target was {self.target_n_gops}, actual is {len(self.gops)}')
 
         return self.gops
@@ -314,62 +328,114 @@ class Video():
             rgb_frame = skimage.color.yuv2rgb(yuv_frame)
         return rgb_frame
     
-    def get_gops(self):
+    def get_gops(self, paths_tuple: bool = False):
         if len(self.gops) == 0:
             self._extract_gops()
 
         return self.gops
+    
+    def get_gops_paths(self):
+        if len(self.gops) == 0:
+            raise RuntimeError('GOPs have never been saved before')
+
+        return self.gops_paths
     
 # ==========================================================
 # ==========================================================
 # ==========================================================
 # ==========================================================
 class Gop():
-    log = create_custom_logger('Gop', logging.DEBUG)
+    log = create_custom_logger('Gop', logging.WARNING)
 
-    def __init__(self, video_ref: Video, current_frame_number: int, slice_iterator = None, extract_features_on_init: bool = False, extract_slices_on_init: bool = True):
+    def __init__(self,
+                current_frame_number: int,
+                video_ref: Video = None,
+                slice_iterator = None,
+                extract_features_on_init: bool = False,
+                extract_slices_on_init: bool = True,
+                intra_frame = None,
+                inter_frames = None,
+                frame_types = None,
+                mb_types = None,
+                luma_qps = None,
+                video_name: str = None,
+                target_gop_length: int = None,
+                crop_width: int = None,
+                crop_height: int = None
+                ):
+        
 
-        self.video_ref = video_ref
+        if video_ref is None and video_name is not None and target_gop_length is not None and crop_width is not None and crop_height is not None:
+            self.video_ref = None
+            self.video_name = video_name
+            self.target_gop_length = target_gop_length
+            self.crop_width = crop_width
+            self.crop_height = crop_height
+        elif video_ref is not None and video_name is None and target_gop_length is None and crop_width is None and crop_height is None:
+            self.video_ref = video_ref
+            self.video_name = video_ref.name
+            self.target_gop_length = video_ref.target_gop_length
+            self.crop_width = video_ref.crop_width
+            self.crop_height = video_ref.crop_height
+        else:
+            raise ValueError('Either video_ref is provided or video_name and target_gop_length are provided')
+
         self.current_frame_number = current_frame_number
-
-        self.crop_width = video_ref.crop_width
-        self.crop_height = video_ref.crop_height
-
-        self.intra_frame = None
-        self.inter_frames = []
-        self.frame_types = []
-        self.mb_types = []
-        self.luma_qps = []
-
-        if slice_iterator == None:
-            self.slice_iterator = Slice.get_slice_iterator(self.video_ref.coded_data_filename)
+        
+        if intra_frame is None and inter_frames is None and frame_types is None and mb_types is None and luma_qps is None:
+            self.is_frozen = False
+            self.intra_frame = None
+            self.inter_frames = []
+            self.frame_types = []
+            self.mb_types = []
+            self.luma_qps = []
+        elif intra_frame is not None and len(inter_frames) > 0 and len(frame_types) > 0 and len(mb_types) > 0 and len(luma_qps) > 0:
+            self.is_frozen = True
+            self.intra_frame = intra_frame
+            self.inter_frames = inter_frames
+            self.frame_types = frame_types
+            self.mb_types = mb_types
+            self.luma_qps = luma_qps
         else:
-            self.slice_iterator = slice_iterator
+            raise ValueError('Either all features are provided or none of them')
+              
+        self.slices = []
 
-        if extract_slices_on_init:
-            self.slices = self._extract_slices(video_ref.target_gop_length)
-        else:
-            self.slices = []
+        if not self.is_frozen:
+            if slice_iterator == None:
+                self.slice_iterator = Slice.get_slice_iterator(self.video_ref.coded_data_filename)
+            else:
+                self.slice_iterator = slice_iterator
 
-        if extract_features_on_init:
-            self._extract_features(self.slices)
+            if extract_slices_on_init:
+                self._extract_slices(video_ref.target_gop_length)
+
+            if extract_features_on_init:
+                self._extract_features(self.slices)
 
     @staticmethod
     def save(gop, path: str):
         if not os.path.exists(path):
             os.makedirs(path)
 
-        filename = os.path.join(path, gop.video_ref.name) + f'_{gop.current_frame_number - gop.video_ref.target_gop_length + 1}.gop'
+        filename = gop.get_filename(path)
         Gop.log.info(f'Saving GOP to {filename}')
 
-        slices_paths = []
-        for slice in gop.slices:
-            slices_paths.append(Slice.save(slice, os.path.join(path, 'slices')))
+        if len(gop) == 0:
+            gop._extract_slices(gop.target_gop_length)
 
         gop_data = (
             gop.current_frame_number,
-            slices_paths,
-        )
+            gop.video_name,
+            gop.target_gop_length,
+            gop.get_intra_frame(),
+            gop.get_inter_frames(),
+            gop.get_frame_types(),
+            gop.get_macroblock_images(),
+            gop.get_luma_qp_images(),
+            gop.crop_width,
+            gop.crop_height
+            )
 
         pickle.dump(gop_data, open(filename, 'wb'))
 
@@ -379,79 +445,102 @@ class Gop():
         return filename
 
     @staticmethod
-    def load(path: str, video_ref: Video):
+    def load(path: str, video_ref: Video = None):
         if not os.path.exists(path):
             raise FileNotFoundError(f'cannot locate the video file "{path}"')
         
         Gop.log.info(f'Loading GOP from {path}')
         gop_data = pickle.load(open(path, 'rb'))
-        gop = Gop(video_ref, gop_data[0], extract_features_on_init=False, extract_slices_on_init=False)
-        
-        for slice_path in gop_data[1]:
-            gop.slices.append(Slice.load(slice_path, gop))
+
+        if video_ref is None:
+            gop = Gop(
+                current_frame_number=gop_data[0],
+                video_name=gop_data[1],
+                target_gop_length=gop_data[2],
+                intra_frame=gop_data[3],
+                inter_frames=gop_data[4],
+                frame_types=gop_data[5],
+                mb_types=gop_data[6],
+                luma_qps=gop_data[7],
+                # TODO: will need to regenerate everything. Temporary fix
+                # crop_width=gop_data[8],
+                crop_width=224,
+                # crop_height=gop_data[9]
+                crop_height=224
+            )
+        else:
+            gop = Gop(
+                    video_ref = video_ref,
+                    current_frame_number = gop_data[0],
+                    intra_frame=gop_data[3],
+                    inter_frames=gop_data[4],
+                    frame_types=gop_data[5],
+                    mb_types=gop_data[6],
+                    luma_qps=gop_data[7]
+                    )
 
         return gop
 
     def __eq__(self, other):
-        #TODO: must check also GOP index if multiple GOPs are extracted from the same video
-        return self.video_properties['filename'] == other.video_properties['filename']
+        return self.__str__() == other.__str__()
     
     def __len__(self):
-        return len(self.slices)
+        if self.is_frozen:
+            return len(self.frame_types)
+        else:
+            return len(self.slices)
 
     def __getitem__():
-        pass
+        return NotImplementedError('__getitem__() Not implemented yet')
+
+    def __str__(self):
+        return f'{self.video_name}_{self.current_frame_number - self.target_gop_length + 1}'
 
     def _extract_slices(self, target_length: int) -> list:
         # each video has x gops and each gop has y slices
-        slice_raw = next(self.slice_iterator)
-        if self.current_frame_number != 0:
-            self.current_frame_number += 1
-
+        if self.is_frozen:
+            raise RuntimeError('GOP is frozen, cannot extract slices')
+        
         slices = []
-        # The first slice is expected to be of type Intra. Find next I slice to start gop
-        while(slice_raw.type != SliceTypeProto.I):
-            try:
-                Gop.log.debug(f'Found slice of type {slice_raw.type} at frame {self.current_frame_number} while looking for type {SliceTypeProto.I}, skipping')
-                slice_raw = next(self.slice_iterator)
-                self.current_frame_number += 1
-            except StopIteration:
-                raise ValueError('No Intra slice found')
-
-        Gop.log.debug(f'Found Intra slice at frame {self.current_frame_number}')
-        slices.append(Slice(slice_raw, self.current_frame_number, self))
-
+        is_first_iteration = True
         while len(slices) < target_length:
             try:
                 slice_raw = next(self.slice_iterator)
+                if self.current_frame_number == 0 and is_first_iteration:
+                    is_first_iteration = False
+                else:
+                    self.current_frame_number += 1
             except StopIteration:
                 Gop.log.critical(f'next() raised StopIteration, Video is over at frame {self.current_frame_number}')
                 break
-            
-            self.current_frame_number += 1
-            
-            if slice_raw.type == SliceTypeProto.I and len(slices) < target_length:
-                # GOP is over
-                # TODO: find next GOP, don't raise exception (careful of very long/infinite loops)
-                # TODO: will need to go to previous(iterator) in next gop
-                Gop.log.critical(f'Found slice of type I before reaching target length of {target_length}, GOP is over with length {len(slices)}')
-                break
 
-            Gop.log.debug(f'Appending Inter slice {self.current_frame_number}')
+            if len(slices) == 0 and slice_raw.type != SliceTypeProto.I:
+                Gop.log.debug(f'Found slice of type {SliceTypeProto.Name(slice_raw.type)} at frame {self.current_frame_number}, skipping')
+                continue
+
+            if slice_raw.type == SliceTypeProto.I:
+                Gop.log.debug(f'Found slice of type {SliceTypeProto.Name(slice_raw.type)} at frame {self.current_frame_number}, initializing GOP')
+                # reset gop if intra frame is found
+                slices = []
+            
+            Gop.log.debug(f'Appending slice of type {SliceTypeProto.Name(slice_raw.type)} at frame {self.current_frame_number}')
             slices.append(Slice(slice_raw, self.current_frame_number, self))
 
         if len(slices) != target_length:
             raise ValueError(f'Unable to reach desired GOP length of {target_length}, actual gop length is {len(slices)}')
         
         Gop.log.debug(f'GOP succesfully extracted from frames {self.current_frame_number - target_length + 1} - {self.current_frame_number}')
-
+        self.slices = slices
         return slices
 
     def _extract_features(self):
+        if self.is_frozen:
+            raise RuntimeError('GOP is frozen, cannot extract features')
+        
         if len(self) == 0 or self.slices is None:
             raise ValueError('GOP not extracted yet')
         
-        Gop.log.debug(f'Extracting features for GOP of video {self.video_ref.name} starting from frame {self.current_frame_number}')
+        Gop.log.debug(f'Extracting features for GOP of video {self.video_name} starting from frame {self.current_frame_number}')
 
         for slice in self.slices:
             # append frame type
@@ -476,6 +565,8 @@ class Gop():
         return None
     
     def get_slice_iterator(self):
+        if self.is_frozen:
+            raise RuntimeError('GOP is frozen, cannot get slice iterator')
         return self.slice_iterator
     
     def get_current_frame_number(self):
@@ -484,7 +575,16 @@ class Gop():
     def get_first_frame_number(self):
         return self.current_frame_number - len(self.slices) + 1
     
+    def get_filename(self, path: str = None):
+        if path is None:
+            return self.video_name + f'_{self.current_frame_number - self.target_gop_length + 1}.gop'
+
+        return os.path.join(path, self.video_name) + f'_{self.current_frame_number - self.target_gop_length + 1}.gop'
+    
     def get_rgb_frame(self, frame_number: int):
+        if self.is_frozen:
+            raise RuntimeError('GOP is frozen, cannot get rgb frame')
+        
         if frame_number < self.get_first_frame_number() or frame_number > self.get_current_frame_number():
             raise ValueError(f'Frame number {frame_number} is not in the GOP range [{self.get_first_frame_number()}, {self.get_current_frame_number()}]')
         
@@ -525,7 +625,7 @@ class Gop():
     
 class Slice:
 
-    log = create_custom_logger('Slice', logging.DEBUG)
+    log = create_custom_logger('Slice', logging.WARNING)
 
     def __init__(self, slice, frame_number: int, gop_ref: Gop):
         if slice is None:

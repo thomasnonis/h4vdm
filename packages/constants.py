@@ -1,7 +1,8 @@
 I_DONT_KNOW_WHAT_TO_DO_WITH_THIS = 0
 
 # Paths
-DATASET_ROOT = '/media/thomas/TN_SSD/h4vdm_datasets/VISION'
+DATASET_ROOT = '/media/thomas/TN_SSD/h4vdm_datasets'
+# DATASET_ROOT = 'datasets'
 
 # Constants
 MACROBLOCK_SIZE = 16
@@ -38,3 +39,8 @@ JAN_N_HEADS = 8 # It is just the default value in PyTorch, not sure what to choo
 JAN_N_LAYERS = 8
 
 OUTPUT_DIMENSION = 1024 #D_r in paper
+
+N_GOPS_FROM_DIFFERENT_DEVICE = 15 #n0 in paper
+N_GOPS_FROM_SAME_DEVICE = 120 #n1 in paper
+DIFFERENT_DEVICE_LABEL = 0
+SAME_DEVICE_LABEL = 1

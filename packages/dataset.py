@@ -4,7 +4,8 @@ import pickle
 import json
 from torch.utils.data import Dataset
 
-from packages.video_utils import H264Extractor, Video
+from packages.video_utils import H264Extractor, Video, Gop
+from packages.constants import DIFFERENT_DEVICE_LABEL, SAME_DEVICE_LABEL, N_GOPS_FROM_DIFFERENT_DEVICE, N_GOPS_FROM_SAME_DEVICE
 from packages.common import create_custom_logger
 
 log = create_custom_logger('dataset.py')
@@ -118,24 +119,24 @@ class VisionDataset(Dataset):
                     self.dataset[device] = []
                     
                 # instantiate entry
-                video = {}
-                video['device'] = device
-                video['media_type'] = media_type
-                video['property'] = property
-                video['url'] = url
-                video['filename'] = filename
-                video['name'] = filename.split('.')[0]
-                video['extension'] = filename.split('.')[1]
-                video['local_path'] = os.path.join(device, media_type, property)
-                video['path'] = os.path.join(self.root, device, media_type, property)
+                video_metadata = {}
+                video_metadata['device'] = device
+                video_metadata['media_type'] = media_type
+                video_metadata['property'] = property
+                video_metadata['url'] = url
+                video_metadata['filename'] = filename
+                video_metadata['name'] = filename.split('.')[0]
+                video_metadata['extension'] = filename.split('.')[1]
+                video_metadata['local_path'] = os.path.join(device, media_type, property)
+                video_metadata['path'] = os.path.join(self.root, device, media_type, property)
 
                 # add element to structure
-                self.dataset[device].append(video)
+                self.dataset[device].append(video_metadata)
 
                 if download_on_init:
-                    downloaded_full_path = download(video['url'], video['path'])
-                    if downloaded_full_path != os.path.join(video['path'], video['filename']):
-                        raise RuntimeError(f'Error while downloading {url}. Downloaded file is {downloaded_full_path} instead of {os.path.join(video["path"], video["filename"])}')
+                    downloaded_full_path = download(video_metadata['url'], video_metadata['path'])
+                    if downloaded_full_path != os.path.join(video_metadata['path'], video_metadata['filename']):
+                        raise RuntimeError(f'Error while downloading {url}. Downloaded file is {downloaded_full_path} instead of {os.path.join(video_metadata["path"], video_metadata["filename"])}')
 
                 self.length += 1
                     
@@ -216,6 +217,7 @@ class VisionGOPDataset(VisionDataset):
         self.frame_height = frame_height
         self.force_rebuild = force_rebuild
         self.build_on_init = build_on_init
+        self.pair_dataset = []
 
         if gop_size < 1:
             raise ValueError('gop_size must be greater than 0')
@@ -240,6 +242,12 @@ class VisionGOPDataset(VisionDataset):
         
         video_metadata = super().__getitem__(index)
 
+        return self._get_video_from_metadata(video_metadata)
+    
+    def get_devices(self):
+        return self.dataset.keys()
+    
+    def _get_video_from_metadata(self, video_metadata):
         # if built on init with force rebuild, no need to forcibly rebuild it here
         if self.build_on_init == True and self.force_rebuild == True:
             rebuild = False
@@ -247,25 +255,98 @@ class VisionGOPDataset(VisionDataset):
             rebuild = self.force_rebuild
 
         video_filename = os.path.join(video_metadata['path'], video_metadata['filename'])
-
-        # saved_video_filename = os.path.join(self.gop_root, video_metadata['name'] + '.video')
-        # if os.path.exists(saved_video_filename) and not rebuild:
-        #     Video.log.info(f'Video file for {video_filename} already exists at {saved_video_filename}, skipping conversion')
-        #     return Video.load(saved_video_filename)
-        
+      
         if 'object' not in video_metadata.keys() or rebuild:
-            VisionGOPDataset.log.debug(f'Building video {index}: {video_metadata["filename"]}')
+            VisionGOPDataset.log.debug(f'Building {video_metadata["filename"]}')
             video = Video(video_filename, video_metadata['device'], self.frame_width, self.frame_height, self.gops_per_video, self.gop_size, extract_gops_on_init=True)
             video_metadata['object'] = Video.save(video, os.path.join(self.gop_root, video_metadata['local_path']))
+            self.save()
+   
         else:
             Video.log.info(f'Video object for {video_filename} already exists, loading it from {video_metadata["object"]}')
             video = Video.load(video_metadata['object'])
         
         return video
     
-    def _build_cartesian_product(self):
-        cartesian_product = []
+    def _build_gop_pair_dataset(self):
 
-        for device1 in self.dataset.keys():
-            for device2 in self.dataset.keys():
-                cartesian_product.append((device1, device2))
+
+        VisionGOPDataset.log.debug(f'Building GOP pair dataset')
+        for device1 in self.get_devices():
+            for device2 in self.get_devices():
+                current_n_gops_from_different_device = 0
+                current_n_gops_from_same_device = 0
+                if device1 != device2:
+                    while current_n_gops_from_different_device < N_GOPS_FROM_DIFFERENT_DEVICE:
+                        # select two random videos from the two devices
+                        random_video1_metadata = random.choice(self.dataset[device1])
+                        random_video2_metadata = random.choice(self.dataset[device2])
+                        random_video1 = self._get_video_from_metadata(random_video1_metadata)
+                        random_video2 = self._get_video_from_metadata(random_video2_metadata)
+                        # retrieve the gops from the videos
+                        random_video1_gops = random_video1.get_gops()
+                        random_video2_gops = random_video2.get_gops()
+                        # choose a random gop from each video
+                        random_gop1_index = random.randint(0, len(random_video1_gops)- 1)
+                        random_gop2_index = random.randint(0, len(random_video2_gops)- 1)
+                        random_gop1 = random_video1_gops[random_gop1_index]
+                        random_gop2 = random_video2_gops[random_gop2_index]
+
+                        # check if the gops are already in the set
+                        for gop1, gop2, label in self.pair_dataset:
+                            if (random_gop1 == gop1 or random_gop1 == gop2) and (random_gop2 == gop1 or random_gop2 == gop2):
+                                VisionGOPDataset.log.debug(f'GOPs already in set, skipping')
+                                continue
+
+                        random_gop_1_path = random_video1.get_gops_paths()[random_gop1_index]
+                        random_gop_2_path = random_video2.get_gops_paths()[random_gop2_index]
+
+                        self.pair_dataset.append((random_gop_1_path, random_gop_2_path, DIFFERENT_DEVICE_LABEL))
+                        current_n_gops_from_different_device += 1
+                        VisionGOPDataset.log.debug(f'GOP {current_n_gops_from_different_device}/{N_GOPS_FROM_DIFFERENT_DEVICE} from different device added to set')
+                else:
+                    while current_n_gops_from_same_device < N_GOPS_FROM_SAME_DEVICE:
+                        device = device1
+                        random_video1_metadata = random.choice(self.dataset[device])
+                        random_video2_metadata = random.choice(self.dataset[device])
+                        random_video1 = self._get_video_from_metadata(random_video1_metadata)
+                        random_video2 = self._get_video_from_metadata(random_video2_metadata)
+                        random_video1_gops = random_video1.get_gops()
+                        random_video2_gops = random_video2.get_gops()
+
+                        random_gop1_index = random.randint(0, len(random_video1_gops)- 1)
+                        random_gop2_index = random.randint(0, len(random_video2_gops)- 1)
+                        random_gop1 = random_video1_gops[random_gop1_index]
+                        random_gop2 = random_video2_gops[random_gop2_index]
+
+                        # check if the gops are already in the set
+                        for gop1, gop2, label in self.pair_dataset:
+                            if (random_gop1 == gop1 or random_gop1 == gop2) and (random_gop2 == gop1 or random_gop2 == gop2):
+                                VisionGOPDataset.log.debug(f'GOPs already in set, skipping')
+                                continue
+
+                        random_gop1_path = random_video1.get_gops_paths()[random_gop1_index]
+                        random_gop2_path = random_video2.get_gops_paths()[random_gop2_index]
+
+                        self.pair_dataset.append((random_gop1_path, random_gop2_path, SAME_DEVICE_LABEL))
+                        current_n_gops_from_same_device += 1
+                        VisionGOPDataset.log.debug(f'GOP {current_n_gops_from_same_device}/{N_GOPS_FROM_SAME_DEVICE} from same device added to set')
+
+                # try:
+                #     Video.h264_extractor.clean_cache()
+                # except Exception as e:
+                #     Video.log.warning(f'Unable to clean h264 cache. Continuing, but beware of your disk space!. Exception was: {e}') 
+
+        return self.pair_dataset
+    
+    '''
+    def get_pair_from_pair_dataset(self, index: int):
+        if index >= len(self.pair_dataset):
+            raise RuntimeError(f'index {index} is greater than dataset length {len(self.pair_dataset)}')
+        
+        # TODO: load needs video ref, dioca
+        gop1 = Gop.load(self.pair_dataset[index][0])
+        gop2 = Gop.load(self.pair_dataset[index][1])
+        label = self.pair_dataset[index][2]
+        return (gop1, gop2, label)
+    '''
