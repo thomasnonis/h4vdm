@@ -86,7 +86,7 @@ class H4vdmNet(nn.Module):
             print("Output frame types feature shape:", frame_types.shape)
         
         # MB types
-        tmp = gop.get_macroblock_types_as_tensor()
+        tmp = gop.get_macroblock_images_as_tensor()
         if debug:
             print("Input MB types shape:", tmp.shape)
         mb = self.mb_net(tmp)
@@ -94,7 +94,7 @@ class H4vdmNet(nn.Module):
             print("Output MB types feature shape:", mb.shape)
 
         # Luma QPs
-        tmp = gop.get_luma_qps_as_tensor()
+        tmp = gop.get_luma_qp_images_as_tensor()
         if debug:
             print("Input luma QPs shape:", tmp.shape)
         luma = self.luma_net(tmp)

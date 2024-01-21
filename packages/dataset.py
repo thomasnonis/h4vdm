@@ -2,6 +2,7 @@ import os
 import random
 import pickle
 import json
+import logging
 from torch.utils.data import Dataset
 
 from packages.video_utils import H264Extractor, Video, Gop
@@ -29,12 +30,12 @@ def download(url, folder_path):
 # ==========================================================
 # ==========================================================
 
-class VisionDataset(Dataset):
+class VisionDataset():
     """VISION dataset (https://lesc.dinfo.unifi.it/VISION/)
     """
 
     JSON_NAME = 'dataset.json'
-    log = create_custom_logger('VisionDataset')
+    log = create_custom_logger('VisionDataset', logging.WARNING)
 
     def __init__(self, root_path: str, download_on_init = False, shuffle = False, ignore_local_dataset: bool = False, devices: list = [], media_types: list = [], properties: list = [], extensions: list = []):
         
@@ -181,7 +182,7 @@ class VisionDataset(Dataset):
 
 class VisionGOPDataset(VisionDataset):
 
-    log = create_custom_logger('VisionGOPDataset')
+    log = create_custom_logger('VisionGOPDataset', logging.WARNING)
 
     def __init__(
             self,
@@ -268,21 +269,65 @@ class VisionGOPDataset(VisionDataset):
         
         return video
     
+
+class GopPairDataset(Dataset):
+    log = create_custom_logger('GopPairDataset', logging.DEBUG)
+
+    def __init__(
+            self,
+            gop_dataset: VisionGOPDataset,
+            n_gops_from_same_device: int,
+            n_gops_from_different_device: int,
+            consider_devices: list = [],
+            shuffle: bool = False
+            ):
+        
+        self.gop_dataset = gop_dataset
+        self.pair_dataset = []
+        self.n_gops_from_same_device = n_gops_from_same_device
+        self.n_gops_from_different_device = n_gops_from_different_device
+        self.consider_devices = consider_devices
+
+        self._build_gop_pair_dataset()
+
+        if shuffle:
+            random.shuffle(self.pair_dataset)
+
+    def __len__(self):
+        return len(self.pair_dataset)
+    
+    def __getitem__(self, index: int):
+        if index >= len(self.pair_dataset):
+            raise RuntimeError(f'index {index} is greater than dataset length {len(self.pair_dataset)}')
+        
+        # TODO: load needs video ref, dioca
+        # video1 = self.gop_dataset._get_video_from_metadata(self.pair_dataset[index][0][1])
+        # video2 = self.gop_dataset._get_video_from_metadata(self.pair_dataset[index][1][1])
+        # gop1 = Gop.load(self.pair_dataset[index][0][0], video1)
+        # gop2 = Gop.load(self.pair_dataset[index][1][0], video2)
+        gop1 = Gop.load(self.pair_dataset[index][0][0])
+        gop2 = Gop.load(self.pair_dataset[index][1][0])
+        label = self.pair_dataset[index][2]
+        return (gop1, gop2, label)
+
     def _build_gop_pair_dataset(self):
+        GopPairDataset.log.debug(f'Building GOP pair dataset')
+        for device1 in self.gop_dataset.get_devices():
+            if len(self.consider_devices) > 0 and device1 not in self.consider_devices:
+                    continue
+            for device2 in self.gop_dataset.get_devices():
+                if len(self.consider_devices) > 0 and device2 not in self.consider_devices:
+                    continue
 
-
-        VisionGOPDataset.log.debug(f'Building GOP pair dataset')
-        for device1 in self.get_devices():
-            for device2 in self.get_devices():
                 current_n_gops_from_different_device = 0
                 current_n_gops_from_same_device = 0
                 if device1 != device2:
-                    while current_n_gops_from_different_device < N_GOPS_FROM_DIFFERENT_DEVICE:
+                    while current_n_gops_from_different_device < self.n_gops_from_different_device:
                         # select two random videos from the two devices
-                        random_video1_metadata = random.choice(self.dataset[device1])
-                        random_video2_metadata = random.choice(self.dataset[device2])
-                        random_video1 = self._get_video_from_metadata(random_video1_metadata)
-                        random_video2 = self._get_video_from_metadata(random_video2_metadata)
+                        random_video1_metadata = random.choice(self.gop_dataset.dataset[device1])
+                        random_video2_metadata = random.choice(self.gop_dataset.dataset[device2])
+                        random_video1 = self.gop_dataset._get_video_from_metadata(random_video1_metadata)
+                        random_video2 = self.gop_dataset._get_video_from_metadata(random_video2_metadata)
                         # retrieve the gops from the videos
                         random_video1_gops = random_video1.get_gops()
                         random_video2_gops = random_video2.get_gops()
@@ -295,22 +340,22 @@ class VisionGOPDataset(VisionDataset):
                         # check if the gops are already in the set
                         for gop1, gop2, label in self.pair_dataset:
                             if (random_gop1 == gop1 or random_gop1 == gop2) and (random_gop2 == gop1 or random_gop2 == gop2):
-                                VisionGOPDataset.log.debug(f'GOPs already in set, skipping')
+                                GopPairDataset.log.debug(f'GOPs already in set, skipping')
                                 continue
 
-                        random_gop_1_path = random_video1.get_gops_paths()[random_gop1_index]
-                        random_gop_2_path = random_video2.get_gops_paths()[random_gop2_index]
+                        random_gop1_path = random_video1.get_gops_paths()[random_gop1_index]
+                        random_gop2_path = random_video2.get_gops_paths()[random_gop2_index]
 
-                        self.pair_dataset.append((random_gop_1_path, random_gop_2_path, DIFFERENT_DEVICE_LABEL))
+                        self.pair_dataset.append(((random_gop1_path, random_video1_metadata), (random_gop2_path, random_video2_metadata), DIFFERENT_DEVICE_LABEL))
                         current_n_gops_from_different_device += 1
-                        VisionGOPDataset.log.debug(f'GOP {current_n_gops_from_different_device}/{N_GOPS_FROM_DIFFERENT_DEVICE} from different device added to set')
+                        GopPairDataset.log.debug(f'GOP {current_n_gops_from_different_device}/{N_GOPS_FROM_DIFFERENT_DEVICE} from different device added to set')
                 else:
-                    while current_n_gops_from_same_device < N_GOPS_FROM_SAME_DEVICE:
+                    while current_n_gops_from_same_device < self.n_gops_from_same_device:
                         device = device1
-                        random_video1_metadata = random.choice(self.dataset[device])
-                        random_video2_metadata = random.choice(self.dataset[device])
-                        random_video1 = self._get_video_from_metadata(random_video1_metadata)
-                        random_video2 = self._get_video_from_metadata(random_video2_metadata)
+                        random_video1_metadata = random.choice(self.gop_dataset.dataset[device])
+                        random_video2_metadata = random.choice(self.gop_dataset.dataset[device])
+                        random_video1 = self.gop_dataset._get_video_from_metadata(random_video1_metadata)
+                        random_video2 = self.gop_dataset._get_video_from_metadata(random_video2_metadata)
                         random_video1_gops = random_video1.get_gops()
                         random_video2_gops = random_video2.get_gops()
 
@@ -322,31 +367,15 @@ class VisionGOPDataset(VisionDataset):
                         # check if the gops are already in the set
                         for gop1, gop2, label in self.pair_dataset:
                             if (random_gop1 == gop1 or random_gop1 == gop2) and (random_gop2 == gop1 or random_gop2 == gop2):
-                                VisionGOPDataset.log.debug(f'GOPs already in set, skipping')
+                                GopPairDataset.log.debug(f'GOPs already in set, skipping')
                                 continue
 
                         random_gop1_path = random_video1.get_gops_paths()[random_gop1_index]
                         random_gop2_path = random_video2.get_gops_paths()[random_gop2_index]
 
-                        self.pair_dataset.append((random_gop1_path, random_gop2_path, SAME_DEVICE_LABEL))
+                        self.pair_dataset.append(((random_gop1_path, random_video1_metadata), (random_gop2_path, random_video2_metadata), SAME_DEVICE_LABEL))
                         current_n_gops_from_same_device += 1
-                        VisionGOPDataset.log.debug(f'GOP {current_n_gops_from_same_device}/{N_GOPS_FROM_SAME_DEVICE} from same device added to set')
-
-                # try:
-                #     Video.h264_extractor.clean_cache()
-                # except Exception as e:
-                #     Video.log.warning(f'Unable to clean h264 cache. Continuing, but beware of your disk space!. Exception was: {e}') 
+                        GopPairDataset.log.debug(f'GOP {current_n_gops_from_same_device}/{N_GOPS_FROM_SAME_DEVICE} from same device added to set')
 
         return self.pair_dataset
     
-    '''
-    def get_pair_from_pair_dataset(self, index: int):
-        if index >= len(self.pair_dataset):
-            raise RuntimeError(f'index {index} is greater than dataset length {len(self.pair_dataset)}')
-        
-        # TODO: load needs video ref, dioca
-        gop1 = Gop.load(self.pair_dataset[index][0])
-        gop2 = Gop.load(self.pair_dataset[index][1])
-        label = self.pair_dataset[index][2]
-        return (gop1, gop2, label)
-    '''

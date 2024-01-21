@@ -52,6 +52,23 @@ def crop_frame(frame, crop_width, crop_height):
         else:
             raise ValueError('Frame has an unexpected number of dimensions')
         
+def convert_image_to_tensor(image):
+    tensor = torch.tensor((), dtype=torch.float)
+    tensor = tensor.new_zeros((1, 3, image.shape[0], image.shape[1]))
+    
+    if len(image.shape) == 2:
+        converted = torch.from_numpy(image)
+        # 3-channel grayscale
+        tensor[0][0] = converted
+        tensor[0][1] = converted
+        tensor[0][2] = converted
+    elif len(image.shape) == 3:
+        tensor[0] = torch.from_numpy(image).permute(2, 0, 1) # (h,w,c) -> (c,h,w)
+    else:
+        raise ValueError(f'Image has an unexpected number of das_tensorimensions: {len(converted.shape)}')
+    
+    return tensor
+
 # ==========================================================
 # ==========================================================
 # ==========================================================
@@ -595,25 +612,57 @@ class Gop():
             self._extract_features()
         return self.intra_frame
     
+    def get_intra_frame_as_tensor(self):
+        frame = self.get_intra_frame()
+        return convert_image_to_tensor(frame)
+    
     def get_inter_frames(self):
         if len(self.inter_frames) == 0:
             self._extract_features()
         return self.inter_frames
+    
+    def get_inter_frames_as_tensor(self):
+        frames = self.get_inter_frames()
+        tensors = []
+        for frame in frames:
+            tensors.append(convert_image_to_tensor(frame))
+
+        return torch.cat(tensors, dim=0)
     
     def get_frame_types(self):
         if len(self.frame_types) == 0:
             self._extract_features()
         return self.frame_types
     
+    def get_frame_types_as_tensor(self):
+        frame_types = self.get_frame_types()
+        return torch.tensor(frame_types)
+    
     def get_macroblock_images(self):
         if len(self.mb_types) == 0:
             self._extract_features()
         return self.mb_types
     
+    def get_macroblock_images_as_tensor(self):
+        frames = self.get_macroblock_images()
+        tensors = []
+        for frame in frames:
+            tensors.append(convert_image_to_tensor(frame))
+
+        return torch.cat(tensors, dim=0)
+    
     def get_luma_qp_images(self):
         if len(self.luma_qps) == 0:
             self._extract_features()
         return self.luma_qps
+    
+    def get_luma_qp_images_as_tensor(self):
+        frames = self.get_luma_qp_images()
+        tensors = []
+        for frame in frames:
+            tensors.append(convert_image_to_tensor(frame))
+
+        return torch.cat(tensors, dim=0)
         
     def is_same_device(self, other_gop) -> bool:
         return self.video_properties['device'] == other_gop.video_properties['device']
