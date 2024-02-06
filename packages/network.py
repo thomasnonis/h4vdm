@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torch.nn import Transformer
+from torch.nn import TransformerEncoder
 from torch.nn import Embedding
 from torch.nn import Parameter
 from torchvision.models.vision_transformer import VisionTransformer as ViT
@@ -56,9 +56,9 @@ class H4vdmNet(nn.Module):
 
         self.special_vectors = Parameter(torch.randn(4, 1, INTERMEDIATE_OUTPUTS_DIMENSION))
 
-        self.joint_net = Transformer(INTERMEDIATE_OUTPUTS_DIMENSION, JAN_N_HEADS, JAN_N_LAYERS, JAN_N_LAYERS)
+        self.joint_net = TransformerEncoder(torch.nn.TransformerEncoderLayer(INTERMEDIATE_OUTPUTS_DIMENSION, JAN_N_HEADS), JAN_N_LAYERS)
 
-        self.linear = nn.Linear(INTERMEDIATE_OUTPUTS_DIMENSION, OUTPUT_DIMENSION)
+        self.linear = nn.Linear(INTERMEDIATE_OUTPUTS_DIMENSION*JAN_INPUT_SIZE, OUTPUT_DIMENSION)
 
     def forward(self, gop, debug = False):
         # Inter
@@ -116,10 +116,12 @@ class H4vdmNet(nn.Module):
              self.special_vectors[3],
              luma),
                 dim = 0)
+        
         if debug:
             print("Input Joint Analysis Network shape:", jan_input.shape)
 
-        result = self.joint_net(jan_input, jan_input) #TODO: need to pass target to transformer forward pass
+        result = self.joint_net(jan_input) #TODO: need to pass target to transformer forward pass
+        result = result.reshape(-1)
         if debug:
             print("Output Joint Analysis Network shape:", result.shape)
 
