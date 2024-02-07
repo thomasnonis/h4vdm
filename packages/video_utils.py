@@ -7,7 +7,7 @@ import struct
 import torch
 import logging
 import pickle
-# import torchvision.transforms as transforms
+
 from slice_pb2 import Slice as SliceProto
 from slice_pb2 import SliceType as SliceTypeProto
 
@@ -19,7 +19,22 @@ from packages.common import create_custom_logger
 # ==========================================================
 # ==========================================================
 
-def get_crop_dimensions(frame_width, frame_height, crop_width, crop_height, position = 'center'):
+def get_crop_dimensions(frame_width: int, frame_height: int, crop_width: int, crop_height: int, position = 'center'):
+    """Returns the crop coordinates to crop a given frame size to a given crop size.
+
+    Args:
+        frame_width (int): The width of the original frame
+        frame_height (int): The height of the original frame
+        crop_width (int): The width of the desired crop
+        crop_height (int): The height of the desired crop
+        position (str, optional): Alignment of the cropped frame. Defaults to 'center'.
+
+    Raises:
+        NotImplementedError: If position is not 'center'.
+
+    Returns:
+        Tuple: The left, right, top and bottom coordinates of the crop
+    """
     if position != 'center':
         raise NotImplementedError('Only center crop is supported for now')
     
@@ -30,29 +45,51 @@ def get_crop_dimensions(frame_width, frame_height, crop_width, crop_height, posi
 
     return (left_crop, right_crop, top_crop, bottom_crop)
 
-def crop_frame(frame, crop_width, crop_height):
-        # TODO: verify correct shape indeces
-        frame_width = frame.shape[1]
-        frame_height = frame.shape[0]
+def crop_frame(frame: np.ndarray, crop_width: int, crop_height: int):
+    """Crops a given frame to a given size.
 
-        # crop to center of frame
-        (left_crop, right_crop, top_crop, bottom_crop) = get_crop_dimensions(frame_width, frame_height, crop_width, crop_height)
+    Args:
+        frame (np.ndarray): The frame to be cropped
+        crop_width (int): The width of the desired crop
+        crop_height (int): The height of the desired crop
 
-        if crop_width <= 0 or crop_height <= 0:
-            raise ValueError('Crop dimensions must be positive')
+    Raises:
+        ValueError: If crop dimensions are not valid or if the frame has an unexpected number of dimensions
+
+    Returns:
+        np.ndarray: The cropped frame
+    """
+    frame_width = frame.shape[1]
+    frame_height = frame.shape[0]
+
+    # crop to center of frame
+    (left_crop, right_crop, top_crop, bottom_crop) = get_crop_dimensions(frame_width, frame_height, crop_width, crop_height)
+
+    if crop_width <= 0 or crop_height <= 0:
+        raise ValueError('Crop dimensions must be positive')
+    
+    if crop_width > frame_width or crop_height > frame_height:
+        raise ValueError('Crop dimensions are bigger than frame dimensions')
+    
+    if len(frame.shape) == 3:
+        return frame[top_crop:bottom_crop, left_crop:right_crop, :]
+    elif len(frame.shape) == 2:
+        return frame[top_crop:bottom_crop, left_crop:right_crop]
+    else:
+        raise ValueError('Frame has an unexpected number of dimensions')
         
-        if crop_width > frame_width or crop_height > frame_height:
-            raise ValueError('Crop dimensions are bigger than frame dimensions')
-        
-        # TODO: verify correct positions of x, y, channel
-        if len(frame.shape) == 3:
-            return frame[top_crop:bottom_crop, left_crop:right_crop, :]
-        elif len(frame.shape) == 2:
-            return frame[top_crop:bottom_crop, left_crop:right_crop]
-        else:
-            raise ValueError('Frame has an unexpected number of dimensions')
-        
-def convert_image_to_tensor(image):
+def convert_image_to_tensor(image: np.ndarray):
+    """Converts a given image to a tensor.
+
+    Args:
+        image (np.ndarray): The image to be converted
+
+    Raises:
+        ValueError: If the image has an unexpected number of dimensions
+
+    Returns:
+        Tensor: The converted image as a Tensor
+    """
     tensor = torch.tensor((), dtype=torch.float)
     tensor = tensor.new_zeros((1, 3, image.shape[0], image.shape[1]))
     
@@ -125,6 +162,19 @@ class H264Extractor():
         return h264_filename
     
     def extract_yuv_and_codes(self, h264_filename):
+        """Extracts the YUV video sequence and the encoding parameters from a given h264 file.
+        The files will be saved in the cache folder provided in the constructor
+
+
+        Args:
+            h264_filename (str): The path of the h264 file
+
+        Raises:
+            FileNotFoundError: If the yuv and/or coded data files haven't been generated
+
+        Returns:
+            Tuple: The path of the YUV file and the path of the encoding parameters file
+        """
         # compute the filenames
         video_name = os.path.basename(h264_filename).split('.')[0]
         h264_name = os.path.basename(h264_filename)
@@ -141,15 +191,9 @@ class H264Extractor():
         # run the extractor to get the yuv and coded data files
         cp = subprocess.run(
                 [self.bin_filename, h264_filename, '--yuv_out', yuv_filename, '--info_out', coded_data_filename, '--n_threads', '0'],
-                # for now, only setting threads to 0 is allowed; using other values can result in 
-                # unexpected behaviors
+                # for now, only setting threads to 0 is allowed; using other values can result in unexpected behaviors
                 check=True
             )
-        
-        # remove the h264 file since it's not needed anymore
-        # os.remove(h264_filename)
-        # if os.path.exists(h264_filename):
-        #     print(f'WARNING: could not remove the h264 file "{h264_filename}"')
 
         # raise exception if the files haven't been generated
         if not os.path.exists(yuv_filename) or not os.path.exists(coded_data_filename):
@@ -159,6 +203,8 @@ class H264Extractor():
         return (yuv_filename, coded_data_filename)
     
     def clean_cache(self):
+        """Cleans the cache directory provided in the constructor
+        """
         H264Extractor.log.debug(f'Cleaning cache directory {self.cache_dir}')
         if os.path.exists(self.cache_dir):
             for files in os.listdir(self.cache_dir):
@@ -175,6 +221,21 @@ class Video():
     log = create_custom_logger('Video', logging.INFO)
 
     def __init__(self, filename: str, device: str, crop_width: int, crop_height: int, target_n_gops: int, target_gop_length: int, extract_gops_on_init: bool = False):
+        """Constructor for the Video class
+
+        Args:
+            filename (str): The filename of the original video
+            device (str): The name of the device that generated the video
+            crop_width (int): The width of the desired crop
+            crop_height (int): The height of the desired crop
+            target_n_gops (int): The desired number of GOPs to be extracted
+            target_gop_length (int): The desired length of each GOP
+            extract_gops_on_init (bool, optional): Choose whether to extract the GOPs on init or to lazy load. Defaults to False.
+
+        Raises:
+            RuntimeError: If the H264 extractor has not been set
+            FileNotFoundError: If the video file cannot be located
+        """
         if Video.h264_extractor == None:
             raise RuntimeError('H264 extractor not set, call Video.set_h264_extractor() before instantiating a Video object')
         
@@ -204,12 +265,32 @@ class Video():
 
     @staticmethod
     def set_h264_extractor(h264_extractor):
+        """Sets the H264 extractor to be used by the Video class
+
+        Args:
+            h264_extractor (H264Extractor): Reference to the H264 extractor to be used
+
+        Returns:
+            H264Extractor: The H264 extractor that has been set
+        """
         Video.h264_extractor = h264_extractor
         Video.log.debug(f'H264 extractor set to {Video.h264_extractor.bin_filename}')
         return Video.h264_extractor
     
     @staticmethod
     def save(video, path):
+        """Saves a given video to a given path
+
+        Args:
+            video (Video): The video to be saved
+            path (str): The path where the video will be saved
+
+        Raises:
+            FileNotFoundError: If the video file was not saved correctly
+
+        Returns:
+            str: The full path of the saved video
+        """
         path = os.path.join(path, video.name)
 
         if not os.path.exists(path):
@@ -242,6 +323,17 @@ class Video():
     
     @staticmethod
     def load(filename):
+        """Loads a video from a given filename
+
+        Args:
+            filename (str): The filename of the video to be loaded
+
+        Raises:
+            FileNotFoundError: If the video file cannot be located
+
+        Returns:
+            Video: The video object that has been loaded
+        """
         if not os.path.exists(filename):
             raise FileNotFoundError(f'cannot locate the video file "{filename}"')
         
@@ -265,12 +357,22 @@ class Video():
         return video
 
     def _decode(self):     
+        """Decodes the video to extract the YUV sequence and the encoding parameters
+        """
         if self.coded_data_filename == None or not os.path.exists(self.coded_data_filename) or self.yuv_filename == None or not os.path.exists(self.yuv_filename):
             self.h264_filename = Video.h264_extractor.convert_to_h264(self.filename)
 
         (self.yuv_filename, self.coded_data_filename) = Video.h264_extractor.extract_yuv_and_codes(self.h264_filename)
 
     def _extract_gops(self):
+        """Extracts the GOPs from the video
+
+        Raises:
+            ValueError: If the desired number of GOPs cannot be reached
+
+        Returns:
+            list: The list of GOPs that have been extracted
+        """
         if len(self.gops) == self.target_n_gops:
             Video.log.debug(f'Video {self.name} already has {self.target_n_gops} GOPs, skipping extraction')
             return self.gops
@@ -305,18 +407,17 @@ class Video():
         It assumes a YUV420 subsampling.
 
         Args:
-            frame_number (_type_): Index of the frame to be extracted
-            width (_type_): Width of the original frame, not the desired crop
-            height (_type_): Height of the original frame, not the desired crop
+            frame_number (int): Index of the frame to be extracted
+            width (int): Width of the original frame, not the desired crop
+            height (int): Height of the original frame, not the desired crop
 
         Returns:
-            _type_: The desired frame in RGB format
+            np.ndarray: The desired frame in RGB format
         """
         self._decode()
 
-        # In YUV420 format, each pixel of the Y (luma) component is represented by 1 byte, while the U and V (chroma) components are subsampled, so each of them is represented by 0.25 bytes. Hence, the total size is (width * height * 1.5).
-        # width = 1280
-        # height = 720
+        # In YUV420 format, each pixel of the Y (luma) component is represented by 1 byte, while the U and V (chroma) components are subsampled,
+        # so each of them is represented by 0.25 bytes. Hence, the total size is (width * height * 1.5).
         frame_size = int(width * height * 1.5)
         
         # Color space conversion constants
@@ -345,13 +446,26 @@ class Video():
             rgb_frame = skimage.color.yuv2rgb(yuv_frame)
         return rgb_frame
     
-    def get_gops(self, paths_tuple: bool = False):
+    def get_gops(self):
+        """Returns the GOPs of the video
+
+        Returns:
+            list: The list of GOPs
+        """
         if len(self.gops) == 0:
             self._extract_gops()
 
         return self.gops
     
     def get_gops_paths(self):
+        """Returns the paths of the GOPs of the video
+
+        Raises:
+            RuntimeError: If no GOPs have been saved before
+
+        Returns:
+            list: The paths of the GOPs
+        """
         if len(self.gops) == 0:
             raise RuntimeError('GOPs have never been saved before')
 
@@ -380,6 +494,27 @@ class Gop():
                 crop_width: int = None,
                 crop_height: int = None
                 ):
+        """Constructor for the GOP class
+
+        Args:
+            current_frame_number (int): The frame number of this GOP
+            video_ref (Video, optional): The reference to the GOP's Video object. Defaults to None.
+            slice_iterator (Iterator, optional): The Slice iterator. Defaults to None.
+            extract_features_on_init (bool, optional): Choose whether to extract the features on init or to lazy load them. Defaults to False.
+            extract_slices_on_init (bool, optional): Choose whether to extract slices on init or to lazy load them. Defaults to True.
+            intra_frame (np.ndarray, optional): Intra frame if the GOP is to be constructed from existing features. Defaults to None.
+            inter_frames (List[np.ndarray], optional): Inter frames if the GOP is to be constructed from existing features. Defaults to None.
+            frame_types (List[int], optional): List of frame types if the GOP is to be constructed from existing features. Defaults to None.
+            mb_types (List[np.ndarray], optional): List of macroblock type images if the GOP is to be constructed from existing features. Defaults to None.
+            luma_qps (_type_, optional): List of luma quantization parameter images if the GOP is to be constructed from existing features. Defaults to None.
+            video_name (str, optional): Name of the video. Defaults to None.
+            target_gop_length (int, optional): The desired GOP length. Defaults to None.
+            crop_width (int, optional): The desired crop width. Defaults to None.
+            crop_height (int, optional): The desired crop height. Defaults to None.
+
+        Raises:
+            ValueError: If the object is not constructed with the correct parameters
+        """
         
 
         if video_ref is None and video_name is not None and target_gop_length is not None and crop_width is not None and crop_height is not None:
@@ -432,6 +567,18 @@ class Gop():
 
     @staticmethod
     def save(gop, path: str):
+        """Saves a given GOP to a given path
+
+        Args:
+            gop (Gop): The GOP to be saved
+            path (str): The path where the GOP will be saved
+
+        Raises:
+            FileNotFoundError: If the GOP file was not saved correctly
+
+        Returns:
+            str: The full path of the saved GOP
+        """
         if not os.path.exists(path):
             os.makedirs(path)
 
@@ -463,6 +610,18 @@ class Gop():
 
     @staticmethod
     def load(path: str, video_ref: Video = None):
+        """Loads a GOP from a given path
+
+        Args:
+            path (str): The path of the GOP file to be loaded
+            video_ref (Video, optional): The reference to the corresponding Video object of the GOP. Defaults to None.
+
+        Raises:
+            FileNotFoundError: _description_
+
+        Returns:
+            _type_: _description_
+        """
         if not os.path.exists(path):
             raise FileNotFoundError(f'cannot locate the video file "{path}"')
         
@@ -514,6 +673,18 @@ class Gop():
         return f'{self.video_name}_{self.current_frame_number - self.target_gop_length + 1}'
 
     def _extract_slices(self, target_length: int) -> list:
+        """Extracts the desired number of slices from the video
+
+        Args:
+            target_length (int): The desired number of slices to be extracted
+
+        Raises:
+            RuntimeError: If the GOP has been loaded from a file and has not be directly generated
+            ValueError: If the desired number of slices cannot be reached
+
+        Returns:
+            list: The list of slices that have been extracted
+        """
         # each video has x gops and each gop has y slices
         if self.is_frozen:
             raise RuntimeError('GOP is frozen, cannot extract slices')
@@ -551,6 +722,15 @@ class Gop():
         return slices
 
     def _extract_features(self):
+        """Extracts the features from the slices
+
+        Raises:
+            RuntimeError: If the GOP has been loaded from a file and has not be directly generated
+            ValueError: If the GOP has not been extracted yet
+
+        Returns:
+            None: None
+        """
         if self.is_frozen:
             raise RuntimeError('GOP is frozen, cannot extract features')
         
@@ -576,29 +756,67 @@ class Gop():
             self.mb_types.append(slice.get_macroblock_image())
             
             # create luma quantization parameter image, where each pixel is the luma qp of the macroblock it belongs to
-            # TODO: needs testing
             self.luma_qps.append(slice.get_luma_qp_image())
 
         return None
     
     def get_slice_iterator(self):
+        """Returns the slice iterator of the GOP
+
+        Raises:
+            RuntimeError: If the GOP has been loaded from a file and has not be directly generated
+
+        Returns:
+            Iterator: The slice iterator
+        """
         if self.is_frozen:
             raise RuntimeError('GOP is frozen, cannot get slice iterator')
         return self.slice_iterator
     
     def get_current_frame_number(self):
+        """Gets the current frame number of the slice iterator
+
+        Returns:
+            int: The frame number
+        """
         return self.current_frame_number
     
     def get_first_frame_number(self):
+        """Gets the frame number of the first frame of the GOP
+
+        Returns:
+            int: The frame number of the first frame of the GOP
+        """
         return self.current_frame_number - len(self.slices) + 1
     
     def get_filename(self, path: str = None):
+        """Returns the filename of the GOP.
+        If the path is given, it returns the full path of the GOP
+
+        Args:
+            path (str, optional): The path in which to build the filenmae. Defaults to None.
+
+        Returns:
+            str: The filename
+        """
         if path is None:
             return self.video_name + f'_{self.current_frame_number - self.target_gop_length + 1}.gop'
 
         return os.path.join(path, self.video_name) + f'_{self.current_frame_number - self.target_gop_length + 1}.gop'
     
     def get_rgb_frame(self, frame_number: int):
+        """Returns the RGB frame of the GOP at a given frame number
+
+        Args:
+            frame_number (int): The frame number
+
+        Raises:
+            RuntimeError: If the GOP has been loaded from a file and has not be directly generated
+            ValueError: If the frame number is not in the GOP range
+
+        Returns:
+            np.ndarray: The RGB frame
+        """
         if self.is_frozen:
             raise RuntimeError('GOP is frozen, cannot get rgb frame')
         
@@ -665,6 +883,14 @@ class Gop():
         return torch.cat(tensors, dim=0)
         
     def is_same_device(self, other_gop) -> bool:
+        """Returns whether the GOP is from the same device as another GOP
+
+        Args:
+            other_gop (Gop): The other GOP
+
+        Returns:
+            bool: Whether the GOP is from the same device as the other GOP
+        """
         return self.video_properties['device'] == other_gop.video_properties['device']
     
 # ==========================================================
@@ -677,6 +903,13 @@ class Slice:
     log = create_custom_logger('Slice', logging.WARNING)
 
     def __init__(self, slice, frame_number: int, gop_ref: Gop):
+        """Constructor for the Slice class
+
+        Args:
+            slice (Slice): Protobuffer slice object
+            frame_number (int): The frame number of the slice
+            gop_ref (Gop): Reference to the corresponding GOP object
+        """
         if slice is None:
             self.type = None
             self.macroblocks = None
@@ -700,6 +933,14 @@ class Slice:
 
     @staticmethod
     def _get_ep_file_iterator(coded_data_filename: str):
+        """Gets an iterator for the encoding parameters file of the video
+
+        Args:
+            coded_data_filename (str): The filename of the encoding parameters file
+
+        Yields:
+            Iterator: The iterator for the encoding parameters file
+        """
         with open(coded_data_filename, 'rb') as file:
             file_size = os.stat(coded_data_filename).st_size
             while file.tell() < file_size:
@@ -710,6 +951,14 @@ class Slice:
 
     @staticmethod
     def get_slice_iterator(coded_data_filename: str):
+        """Gets an iterator for the slices of the video
+
+        Args:
+            coded_data_filename (str): The filename of the encoding parameters file
+
+        Yields:
+            Slice: The slice object
+        """
         iterator = Slice._get_ep_file_iterator(coded_data_filename)
         for bytes in iterator:
             slice = SliceProto()
@@ -718,6 +967,18 @@ class Slice:
     
     @staticmethod
     def save(slice, path: str):
+        """Saves a given slice to a given path
+
+        Args:
+            slice (Slice): The slice to be saved
+            path (str): The path where the slice will be saved
+
+        Raises:
+            FileNotFoundError: If the slice file was not saved correctly
+
+        Returns:
+            str: The full path of the saved slice
+        """
         if not os.path.exists(path):
             os.makedirs(path)
 
@@ -745,6 +1006,18 @@ class Slice:
     
     @staticmethod
     def load(filename, gop_ref: Gop):
+        """Loads a slice from a given filename
+
+        Args:
+            filename (str): The filename of the slice to be loaded
+            gop_ref (Gop): The reference to the corresponding GOP object
+
+        Raises:
+            FileNotFoundError: If the slice file cannot be located
+
+        Returns:
+            Slice: The slice object that has been loaded
+        """
         if not os.path.exists(filename):
             raise FileNotFoundError(f'cannot locate the video file "{filename}"')
         
@@ -763,13 +1036,22 @@ class Slice:
 
 
     def get_type(self):
+        """Gets the type of the slice
+
+        Returns:
+            int: The type of the slice
+        """
         return self.type
 
     def is_intra(self) -> bool:
+        """Returns whether the slice is an intra slice
+
+        Returns:
+            bool: True if the slice is an intra slice, False otherwise
+        """
         return self.get_type() == SliceTypeProto.I
 
     def get_rgb_frame(self):
-        # TODO: remember to include also intra-intra in the list of inter frames
         if self.rgb_frame is None:
             self.rgb_frame = self.video_ref._get_rgb_frame(self.frame_number, self.original_width, self.original_height)
             self.rgb_frame = crop_frame(self.rgb_frame, self.crop_width, self.crop_height)
@@ -777,6 +1059,8 @@ class Slice:
         return self.rgb_frame
     
     def _extract_features(self):
+        """Extracts the features from the slice
+        """
         luma_qp_image = np.zeros((self.original_height, self.original_width))
         macroblock_image = np.zeros((self.original_height, self.original_width))
         for mb in self.macroblocks:

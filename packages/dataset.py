@@ -12,6 +12,18 @@ from packages.common import create_custom_logger
 log = create_custom_logger('dataset.py')
 
 def download(url, folder_path):
+    """Downloads a file from a given url into a given folder path if it does not exist already, otherwise it skips the download
+
+    Args:
+        url (str): The URL of the file to be downloaded
+        folder_path (str): The path in which to save the file
+
+    Raises:
+        RuntimeError: If the file cannot be downloaded
+
+    Returns:
+        str: The full path of the downloaded file
+    """
     filename = url.split('/')[-1]
     full_path = os.path.join(folder_path, filename)
     if os.path.exists(full_path):
@@ -31,14 +43,30 @@ def download(url, folder_path):
 # ==========================================================
 
 class VisionDataset():
-    """VISION dataset (https://lesc.dinfo.unifi.it/VISION/)
+    """VISION dataset class
+     
+    References the dataset https://lesc.dinfo.unifi.it/VISION/
     """
 
     JSON_NAME = 'dataset.json'
     log = create_custom_logger('VisionDataset', logging.WARNING)
 
     def __init__(self, root_path: str, download_on_init = False, shuffle = False, ignore_local_dataset: bool = False, devices: list = [], media_types: list = [], properties: list = [], extensions: list = []):
-        
+        """Constructor for the VisionDataset class
+
+        Args:
+            root_path (str): The path in which to save the dataset resources
+            download_on_init (bool, optional): Choose whether to download the files on init or to wait until they are requested. Defaults to False.
+            shuffle (bool, optional): Choose whether to shuffle the dataset. Defaults to False.
+            ignore_local_dataset (bool, optional): Choose whether to create a new dataset regardless of the local cache. Defaults to False.
+            devices (list, optional): The list of devices to include in the dataset. All are considered if not set. Defaults to [].
+            media_types (list, optional): The list of media types to include in the dataset. All are considered if not set. Defaults to [].
+            properties (list, optional): The list of properties to include in the dataset. All are considered if not set. Defaults to [].
+            extensions (list, optional): The list of file extensions to include in the dataset. All are considered if not set. Defaults to [].
+
+        Raises:
+            FileNotFoundError: If the root_path does not exist and cannot be created
+        """
         VisionDataset.log.debug(f'Building VISION dataset in {root_path}')
         self.root_path = root_path
 
@@ -62,9 +90,24 @@ class VisionDataset():
         self.index_to_dict_map = self._build_index_to_dict_map(shuffle)
 
     def __len__(self):
+        """Returns the length of the dataset
+
+        Returns:
+            int: The length of the dataset
+        """
         return self.length
     
     def __getitem__(self, index):
+        """Returns the video metadata at the given index
+
+        Args:
+            index (int): The index of the video to retrieve
+
+        Raises:
+            RuntimeError: If the index is greater than the dataset length or if the video does not exist
+        Returns:
+            dict: The metadata structure object of the video
+        """
         if index > self.length:
             raise RuntimeError(f'index {index} is greater than dataset length {self.length}')
         
@@ -80,6 +123,14 @@ class VisionDataset():
         return video
     
     def _parse_url(self, url):
+        """Retrieves the video's properties from the URL
+
+        Args:
+            url (str): URL of the video. Must be in the format https://lesc.dinfo.unifi.it/VISION/dataset/device/media_type/property/filename
+
+        Returns:
+            tuple: Tuple containing the device, media_type, property and filename
+        """
         structure = url.split('https://lesc.dinfo.unifi.it/VISION/dataset/')[1].split('/')
         device = structure[0]
         media_type = structure[1]
@@ -89,6 +140,21 @@ class VisionDataset():
         return device, media_type, property, filename
     
     def _build_dataset(self, devices = [], media_types = [], properties = [], extensions = [], download_on_init: bool = False) -> dict:
+        """Builds the dataset structure given some filters
+
+        Args:
+            devices (list, optional): The list of devices to include in the dataset. All are considered if not set. Defaults to [].
+            media_types (list, optional): The list of media types to include in the dataset. All are considered if not set. Defaults to [].
+            properties (list, optional): The list of properties to include in the dataset. All are considered if not set. Defaults to [].
+            extensions (list, optional): The list of file extensions to include in the dataset. All are considered if not set. Defaults to [].
+            download_on_init (bool, optional): Choose whether to download the files on init or to wait until they are requested. Defaults to False.
+
+        Raises:
+            RuntimeError: If the downloaded file is not the expected one
+
+        Returns:
+            dict: The dataset structure
+        """
         vision_files_path = download('https://lesc.dinfo.unifi.it/VISION/VISION_files.txt', self.root)
         with open(vision_files_path) as f:
             urls = f.readlines()
@@ -144,6 +210,17 @@ class VisionDataset():
         return self.dataset
     
     def _build_index_to_dict_map(self, shuffle: bool) -> list:
+        """Builds a map that from a number finds the correct keys to the dict to be able to retrieve entries via an index
+
+        Args:
+            shuffle (bool): Choose whether to shuffle the dataset
+
+        Raises:
+            RuntimeError: If the index to dict map length is different from the dataset length
+
+        Returns:
+            list: The index to dict map
+        """
         index_to_dict_map = []
 
         for device in self.dataset.keys():
@@ -158,12 +235,19 @@ class VisionDataset():
         return index_to_dict_map
     
     def save(self):
+        """Saves the dataset to a JSON file
+        """
         filename = os.path.join(self.root, VisionDataset.JSON_NAME)
         VisionDataset.log.info(f'Saving VISION dataset to {filename}')
         with open(filename, 'w') as f:
             json.dump(self.dataset, f, indent=4)
 
     def load(self):
+        """Loads the dataset from a JSON file
+
+        Returns:
+            bool: True if the dataset was loaded, False otherwise
+        """
         filename = os.path.join(self.root, VisionDataset.JSON_NAME)
         if os.path.exists(filename):
             VisionDataset.log.info(f'Loading VISION dataset from {filename}')
@@ -200,6 +284,28 @@ class VisionGOPDataset(VisionDataset):
             download_on_init: bool = False,
             ignore_local_dataset: bool = False,
             shuffle: bool = False):
+        """Constructor for the VisionGOPDataset class
+
+        Args:
+            root_path (str): The path in which to save the dataset resources
+            shuffle (bool, optional): Choose whether to shuffle the dataset. Defaults to False.
+            devices (list, optional): The list of devices to include in the dataset. All are considered if not set. Defaults to [].
+            media_types (list, optional): The list of media types to include in the dataset. All are considered if not set. Defaults to [].
+            properties (list, optional): The list of properties to include in the dataset. All are considered if not set. Defaults to [].
+            extensions (list, optional): The list of file extensions to include in the dataset. All are considered if not set. Defaults to [].            
+            gop_size (int, optional): The number of frames in a GOP. Defaults to 8.
+            frame_width (int, optional): The width of the GOP frames. Defaults to 224.
+            frame_height (int, optional): The height of the GOP frames. Defaults to 224.
+            gops_per_video (int, optional): The number of GOPs extracted for each video. Defaults to 1.
+            build_on_init (bool, optional): Choose whether to build the dataset on init or to lazy load it. Defaults to False.
+            force_rebuild (bool, optional): Choose whether to forcibly rebuild the GOPs or whether to load the existing ones. Defaults to False.
+            download_on_init (bool, optional): Choose whether to download the files on init or to wait until they are requested. Defaults to False.
+            ignore_local_dataset (bool, optional): Choose whether to create a new dataset regardless of the local cache. Defaults to False.
+            shuffle (bool, optional): Choose whether to shuffle the dataset. Defaults to False.
+
+        Raises:
+            ValueError: If the gop_size, frame_width, frame_height or gops_per_video are not valid
+        """
         
         VisionGOPDataset.log.debug(f'Building VISION GOP dataset in {root_path}')
         super().__init__(root_path=root_path,
@@ -235,9 +341,25 @@ class VisionGOPDataset(VisionDataset):
                 video = self[i]
 
     def __len__(self):
+        """Returns the length of the dataset
+
+        Returns:
+            int: The length of the dataset
+        """
         return super().__len__()
     
     def __getitem__(self, index):
+        """Returns the video metadata at the given index
+
+        Args:
+            index (int): The index of the video to retrieve
+
+        Raises:
+            RuntimeError: If the index is greater than the dataset length
+
+        Returns:
+            Video: the Video object
+        """
         if index >= len(self):
             raise RuntimeError(f'index {index} is greater than dataset length {len(self)}')
         
@@ -246,9 +368,22 @@ class VisionGOPDataset(VisionDataset):
         return self._get_video_from_metadata(video_metadata)
     
     def get_devices(self):
+        """Returns the list of devices in the dataset
+
+        Returns:
+            list: The list of devices in the dataset
+        """
         return self.dataset.keys()
     
     def _get_video_from_metadata(self, video_metadata):
+        """Returs the Video object from the corresponding metadata
+
+        Args:
+            video_metadata (dict): The video's metadata
+
+        Returns:
+            Video: The Video object
+        """
         # if built on init with force rebuild, no need to forcibly rebuild it here
         if self.build_on_init == True and self.force_rebuild == True:
             rebuild = False
@@ -281,6 +416,15 @@ class GopPairDataset(Dataset):
             consider_devices: list = [],
             shuffle: bool = False
             ):
+        """Constructor for the GopPairDataset class
+
+        Args:
+            gop_dataset (VisionGOPDataset): The reference to the GOP dataset
+            n_gops_from_same_device (int): The number of GOPs to consider from the same device
+            n_gops_from_different_device (int): The number of GOPs to consider from different devices
+            consider_devices (list, optional): Filter for devices to be considered. Considers all devices if empty. Defaults to [].
+            shuffle (bool, optional): Choose whether to shuffle the pairs. Defaults to False.
+        """
         
         self.gop_dataset = gop_dataset
         self.pair_dataset = []
@@ -294,23 +438,39 @@ class GopPairDataset(Dataset):
             random.shuffle(self.pair_dataset)
 
     def __len__(self):
+        """Returns the length of the dataset
+
+        Returns:
+            int: The length of the dataset
+        """
         return len(self.pair_dataset)
     
     def __getitem__(self, index: int):
+        """Returns the pair of GOPs at the given index
+
+        Args:
+            index (int): The index
+
+        Raises:
+            RuntimeError: If the index is greater than the dataset length
+
+        Returns:
+            tuple: The pair of GOPs and the label
+        """
         if index >= len(self.pair_dataset):
             raise RuntimeError(f'index {index} is greater than dataset length {len(self.pair_dataset)}')
         
-        # TODO: load needs video ref, dioca
-        # video1 = self.gop_dataset._get_video_from_metadata(self.pair_dataset[index][0][1])
-        # video2 = self.gop_dataset._get_video_from_metadata(self.pair_dataset[index][1][1])
-        # gop1 = Gop.load(self.pair_dataset[index][0][0], video1)
-        # gop2 = Gop.load(self.pair_dataset[index][1][0], video2)
         gop1 = Gop.load(self.pair_dataset[index][0][0])
         gop2 = Gop.load(self.pair_dataset[index][1][0])
         label = self.pair_dataset[index][2]
         return (gop1, gop2, label)
 
     def _build_gop_pair_dataset(self):
+        """Builds the GOP pair dataset
+
+        Returns:
+            list: The pair dataset
+        """
         GopPairDataset.log.debug(f'Building GOP pair dataset')
         for device1 in self.gop_dataset.get_devices():
             if len(self.consider_devices) > 0 and device1 not in self.consider_devices:

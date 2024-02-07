@@ -10,6 +10,8 @@ from packages.constants import *
 
 class H4vdmNet(nn.Module):
     def __init__(self):
+        """Constructor for the H4vdmNet class. This class is a PyTorch module that implements the H4VDM network.
+        """
         super().__init__()
 
         self.intra_net = ViT(
@@ -61,6 +63,15 @@ class H4vdmNet(nn.Module):
         self.linear = nn.Linear(INTERMEDIATE_OUTPUTS_DIMENSION*JAN_INPUT_SIZE, OUTPUT_DIMENSION)
 
     def forward(self, gop, debug = False):
+        """Forward pass of the H4VDM network.
+
+        Args:
+            gop (Gop): The GOP to be processed.
+            debug (bool, optional): Choose whether to print shapes at all steps for debug purposes. Defaults to False.
+
+        Returns:
+            Tensor: The output of the H4VDM network.
+        """
         # Inter
         tmp = gop.get_intra_frame_as_tensor()
         if debug:
