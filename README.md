@@ -102,6 +102,7 @@ See `h4vdm.ipynb` for a complete example.
 - [x] Minimize RAM usage
 - [ ] Training and performance evaluation
 - [ ] Randomize crop centering
+- [ ] GOP extraction from random location 
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
