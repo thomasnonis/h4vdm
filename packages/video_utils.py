@@ -218,7 +218,7 @@ class H264Extractor():
 
 class Video():
     h264_extractor = None
-    log = create_custom_logger('Video', logging.INFO)
+    log = create_custom_logger('Video', logging.CRITICAL)
 
     def __init__(self, filename: str, device: str, crop_width: int, crop_height: int, target_n_gops: int, target_gop_length: int, extract_gops_on_init: bool = False):
         """Constructor for the Video class
@@ -1088,7 +1088,7 @@ class Slice:
     def get_rgb_frame_as_tensor(self):
         frame = self.get_rgb_frame()
 
-        frame_tensor = torch.tensor((), dtype=torch.float)
+        frame_tensor = torch.tensor((), dtype=torch.float, requires_grad=True)
         frame_tensor = frame_tensor.new_zeros((1, frame.shape[2], frame.shape[0], frame.shape[1]))
         frame_tensor[0] = torch.from_numpy(self.intra_frame).permute(2, 0, 1) # (h,w,c) -> (c,h,w)
         return frame_tensor
@@ -1103,7 +1103,7 @@ class Slice:
     def get_macroblock_image_as_tensor(self):
         macroblock_image = self.get_macroblock_image()
         
-        mb_image_tensor = torch.tensor((), dtype=torch.float)
+        mb_image_tensor = torch.tensor((), dtype=torch.float, requires_grad=True)
         mb_image_tensor = mb_image_tensor.new_zeros((1, 3, macroblock_image.shape[0], macroblock_image.shape[1]))
         converted = torch.from_numpy(macroblock_image)
 
@@ -1117,7 +1117,7 @@ class Slice:
     def get_luma_qps_as_tensor(self):
         luma_qps_image = self.get_luma_qp_image()
         
-        luma_qps_tensor = torch.tensor((), dtype=torch.float)
+        luma_qps_tensor = torch.tensor((), dtype=torch.float, requires_grad=True)
         luma_qps_tensor = luma_qps_tensor.new_zeros((1, 3, luma_qps_image.shape[0], luma_qps_image.shape[1]))
         converted = torch.from_numpy(luma_qps_image)
 

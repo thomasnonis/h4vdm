@@ -406,7 +406,7 @@ class VisionGOPDataset(VisionDataset):
     
 
 class GopPairDataset(Dataset):
-    log = create_custom_logger('GopPairDataset', logging.DEBUG)
+    log = create_custom_logger('GopPairDataset', logging.CRITICAL)
 
     def __init__(
             self,

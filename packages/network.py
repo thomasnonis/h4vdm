@@ -30,7 +30,7 @@ class H4vdmNet(nn.Module):
             num_layers = VIT1_DEPTH,
             num_heads = VIT1_NUM_HEADS,
             hidden_dim = VIT1_PROJECTION_DIMENSION,
-            mlp_dim = VIT2_MLP_DIMENSION,
+            mlp_dim = VIT1_MLP_DIMENSION,
             num_classes=VIT1_OUTPUT_DIMENSION
             )
 
@@ -43,7 +43,7 @@ class H4vdmNet(nn.Module):
             num_heads = VIT2_NUM_HEADS,
             hidden_dim = VIT2_PROJECTION_DIMENSION,
             mlp_dim = VIT2_MLP_DIMENSION,
-            num_classes=VIT1_OUTPUT_DIMENSION
+            num_classes=VIT2_OUTPUT_DIMENSION
             )
         
         self.luma_net = ViT(
@@ -53,7 +53,7 @@ class H4vdmNet(nn.Module):
             num_heads = VIT2_NUM_HEADS,
             hidden_dim = VIT2_PROJECTION_DIMENSION,
             mlp_dim = VIT2_OUTPUT_DIMENSION,
-            num_classes=VIT1_OUTPUT_DIMENSION
+            num_classes=VIT2_OUTPUT_DIMENSION
             )
 
         self.special_vectors = Parameter(torch.randn(4, 1, INTERMEDIATE_OUTPUTS_DIMENSION))
@@ -62,7 +62,7 @@ class H4vdmNet(nn.Module):
 
         self.linear = nn.Linear(INTERMEDIATE_OUTPUTS_DIMENSION*JAN_INPUT_SIZE, OUTPUT_DIMENSION)
 
-    def forward(self, gop, debug = False):
+    def forward(self, gop, debug = False, device = "cpu"):
         """Forward pass of the H4VDM network.
 
         Args:
@@ -74,6 +74,7 @@ class H4vdmNet(nn.Module):
         """
         # Inter
         tmp = gop.get_intra_frame_as_tensor()
+        tmp = tmp.to(device)
         if debug:
             print("Input intra frame shape:", tmp.shape)
         intra = self.intra_net(tmp)
@@ -82,6 +83,7 @@ class H4vdmNet(nn.Module):
         
         # Intra
         tmp = gop.get_inter_frames_as_tensor()
+        tmp = tmp.to(device)
         if debug:
             print("Input inter frames shape:", tmp.shape)
         inter = self.inter_net(tmp)
@@ -90,6 +92,7 @@ class H4vdmNet(nn.Module):
         
         # Frame types
         tmp = gop.get_frame_types_as_tensor()
+        tmp = tmp.to(device)
         if debug:
             print("Input frame types shape:", tmp.shape)
         frame_types = self.frame_types_net(tmp)
@@ -98,6 +101,7 @@ class H4vdmNet(nn.Module):
         
         # MB types
         tmp = gop.get_macroblock_images_as_tensor()
+        tmp = tmp.to(device)
         if debug:
             print("Input MB types shape:", tmp.shape)
         mb = self.mb_net(tmp)
@@ -106,6 +110,7 @@ class H4vdmNet(nn.Module):
 
         # Luma QPs
         tmp = gop.get_luma_qp_images_as_tensor()
+        tmp = tmp.to(device)
         if debug:
             print("Input luma QPs shape:", tmp.shape)
         luma = self.luma_net(tmp)
@@ -131,7 +136,7 @@ class H4vdmNet(nn.Module):
         if debug:
             print("Input Joint Analysis Network shape:", jan_input.shape)
 
-        result = self.joint_net(jan_input) #TODO: need to pass target to transformer forward pass
+        result = self.joint_net(jan_input)
         result = result.reshape(-1)
         if debug:
             print("Output Joint Analysis Network shape:", result.shape)
