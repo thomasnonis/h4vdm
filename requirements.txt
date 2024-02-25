@@ -98,3 +98,5 @@ protobuf==3.20.*
 torch
 torchvision
 einops
+wandb
+scikit-learn
