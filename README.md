@@ -48,10 +48,21 @@ The following resources are required for the code to work:
 1. Clone the repo
    ```sh
    git clone https://github.com/thomasnonis/h4vdm.git
+   git submodule init
+   git submodule update
    ```
+   Note that you need to have your ssh key set up on both GitHub and GitLab
+
 2. Install the dependencies
     ```sh
     pip install -r requirements.txt
+    ```
+
+3. If required, rebuild the protobuffer
+    ```sh
+    apt install -y protobuf-compiler
+    cd h264-extractor/openh264/info_shipout/
+    protoc --python_out=. slice.proto
     ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -100,7 +111,7 @@ See `h4vdm.ipynb` for a complete example.
 - [x] H264 dataset management
 - [x] Lazy generation
 - [x] Minimize RAM usage
-- [ ] Training and performance evaluation
+- [x] Training and performance evaluation
 - [ ] Randomize crop centering
 - [ ] GOP extraction from random location 
 
