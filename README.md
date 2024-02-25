@@ -58,7 +58,15 @@ The following resources are required for the code to work:
     pip install -r requirements.txt
     ```
 
-3. If required, rebuild the protobuffer
+3. Install the submodule dependencies
+    - Install `gcc`, `nasm`, `cmake`, `ffmpeg`
+    - Run `make` in the `h264-extractor` folder to build the modified `openh264` codec
+
+4. If required, rebuild the protobuffer
+    ```sh
+    ./h264-extractor/openh264/info_shipout/compile_proto.sh
+    ```
+    alternatively
     ```sh
     apt install -y protobuf-compiler
     cd h264-extractor/openh264/info_shipout/
